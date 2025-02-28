@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.DS_Store
+.env
+
+# Ignore pytest cache and virtual environment
+.pytest_cache/
+venv/
