@@ -9,7 +9,7 @@ llm = OpenAI()
 def generate_subtasks(task_description: str):
     prompt = (
         f"Break down the following task into a few practical, actionable subtasks that can be added to a calendar or reminder app. "
-        f"Ensure the subtasks are necessary and avoid over-complicating simple tasks. "
+        f"Ensure the subtasks are necessary and avoid over-complicating simple tasks that doesn't overwhelm the calendar."
         f"Focus on key steps that help track and make progress:\n\n"
         f"Task: {task_description}\n\nSubtasks:"
     )
