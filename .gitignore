@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+credentials.json
+token.pickle
 
 # Ignore pytest cache and virtual environment
 .pytest_cache/

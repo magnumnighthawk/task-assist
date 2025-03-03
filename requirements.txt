@@ -3,5 +3,6 @@ langchain-openai
 langchain-community
 streamlit
 google-api-python-client
-google-auth
 faiss-cpu
+google-auth-httplib2
+google-auth-oauthlib

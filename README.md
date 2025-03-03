@@ -61,12 +61,12 @@ This modular design allows for a simple MVP that can be easily extended with mor
 
 ## Configuration
 
-1. **OpenAI API Key:**
-   - Set your OpenAI API key as an environment variable or update it directly in the configuration files.
+1. **Environment Variables:**
+   - Copy `.env.sample` to `.env` and update the API keys and other configurations as needed.
 
 2. **Google Calendar Integration:**
    - Follow Google’s documentation to set up OAuth credentials.
-   - Save your OAuth token as `token.json` in the project root directory.
+   - Save your OAuth token as `token.pickle` in the project root directory.
 
 ## Usage
 
@@ -75,7 +75,7 @@ This modular design allows for a simple MVP that can be easily extended with mor
 Run the main script to interact with Task Assist through the terminal:
 
 ```bash
-python generate.py
+python execute_and_verify.py
 ```
 
 ### Streamlit UI
