@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from langchain_openai import OpenAI
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()
 
 llm = OpenAI()
 
@@ -15,7 +15,7 @@ def generate_subtasks(task_description: str, max_subtasks: int = 5):
     )
     response = llm(prompt)
     subtasks = response.split("\n")
-    # Extract subtasks from the numbered list
+    
     subtasks = [s.strip() for s in subtasks if s.strip() and s.strip()[0].isdigit()]
     return subtasks
 
@@ -25,7 +25,7 @@ if __name__ == "__main__":
     print("Generated Subtasks:")
     for subtask in subtasks:
         print(f" - {subtask}")
-    # Ask if further breakdown is needed
+    
     further_breakdown = input("Do you need to break down any of these subtasks further? (yes/no): ").strip().lower()
     if further_breakdown == "yes":
         subtask_to_breakdown = input("Enter the subtask number to break down further: ").strip()

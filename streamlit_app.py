@@ -1,7 +1,9 @@
 import streamlit as st
 from generate import generate_subtasks
 
-st.title("AI-Powered Workflow Automation")
+st.set_page_config(page_title="Task assist AI")  # Set the browser tab title
+
+st.title("Task assist AI")
 
 task_description = st.text_input("Enter a new task:")
 max_subtasks = st.number_input("Enter the maximum number of subtasks:", min_value=1, step=1, value=5)
