@@ -13,16 +13,29 @@ if st.button("Generate Subtasks"):
     st.session_state.subtasks = subtasks
     st.session_state.edit_mode = [False] * len(subtasks)
 
+def get_priority_color(priority):
+    if priority == "High":
+        return "red"
+    elif priority == "Medium":
+        return "orange"
+    elif priority == "Low":
+        return "green"
+    return "gray"
+
 if 'subtasks' in st.session_state:
     st.write("Generated Subtasks:")
     for i, subtask in enumerate(st.session_state.subtasks):
         col1, col2, col3, col4, col5 = st.columns([5, 1, 1, 1, 1])
         with col1:
             if st.session_state.edit_mode[i]:
-                new_subtask = st.text_input(f"Subtask {i+1}", value=subtask, key=f"subtask_{i}")
-                st.session_state.subtasks[i] = new_subtask
+                new_subtask = st.text_input(f"Subtask {i+1}", value=subtask['description'], key=f"subtask_{i}")
+                st.session_state.subtasks[i]['description'] = new_subtask
             else:
-                st.write(f"{subtask}")
+                priority_color = get_priority_color(subtask['priority'])
+                st.markdown(
+                    f"{subtask['description']} <span style='background-color:{priority_color}; padding: 2px 4px; border-radius: 4px; margin-left: 8px;'>{subtask['priority']}</span>",
+                    unsafe_allow_html=True
+                )
         with col2:
             if st.session_state.edit_mode[i]:
                 if st.button("💾", key=f"save_{i}"):

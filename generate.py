@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 from langchain_openai import OpenAI
 
@@ -8,15 +9,40 @@ llm = OpenAI()
 
 def generate_subtasks(task_description: str, max_subtasks: int = 5):
     prompt = (
-        f"Break down the following task into a few practical, actionable subtasks that can be added to a calendar or reminder app. "
-        f"Ensure the subtasks are necessary and avoid over-complicating simple tasks that doesn't overwhelm the calendar. "
-        f"Focus on key steps that help track and make progress. Provide the subtasks as a numbered list with a maximum of {max_subtasks} subtasks:\n\n"
-        f"Task: {task_description}\n\nSubtasks:\n"
+        "You are a JSON formatter"
+        "Break down the following task into a few practical, actionable subtasks that can be added to a calendar or reminder app. "
+        "Ensure the subtasks are necessary and avoid over-complicating simple tasks that doesn't overwhelm the calendar. "
+        "Focus on key steps that help track and make progress."
+        "Each subtask must be a JSON object with exactly two keys: \"description\" and \"priority\". "
+        "The \"description\" should be a concise string, and \"priority\" should be one of \"High\", \"Medium\", or \"Low\". "
+        "Do not include any additional text, explanations, or markdown formatting in your output. "
+        "Output only a valid JSON array. Here is an example output:\n\n"
+        "[\n"
+        "  {\"description\": \"Research requirements\", \"priority\": \"High\"},\n"
+        "  {\"description\": \"Draft plan\", \"priority\": \"Medium\"}\n"
+        "]\n\n"
+        f"Now, given the following task, output only a valid JSON array with a maximum of {max_subtasks} subtasks.\n"
+        f"Task: {task_description}\n\n"
+        "JSON:"
     )
     response = llm(prompt)
-    subtasks = response.split("\n")
-    
-    subtasks = [s.strip() for s in subtasks if s.strip() and s.strip()[0].isdigit()]
+    try:
+        subtasks = json.loads(response)
+        # Validate each subtask has the required keys
+        for task in subtasks:
+            if 'description' not in task:
+                raise ValueError("Missing 'description' key.")
+            if 'priority' not in task:
+                task['priority'] = "Medium"  # Assign a default priority if missing
+    except (json.JSONDecodeError, ValueError) as e:
+        # Fallback: use basic text parsing if JSON parsing fails
+        print("Error parsing JSON, using fallback parsing method.", e)
+        subtasks = []
+        for line in response.strip().split('\n'):
+            # Remove list markers and whitespace
+            line = line.strip("- ").strip()
+            if line:
+                subtasks.append({"description": line, "priority": "Medium"})
     return subtasks
 
 if __name__ == "__main__":
