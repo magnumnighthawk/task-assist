@@ -1,100 +1,85 @@
 # Task Assist
 
-Task Assist is an AI-powered workflow automation application designed to help you manage tasks and reminders with a multi-agent architecture. This project leverages Python, OpenAI, Langchain, Google Calendar API, and additional tools to provide a simple yet extensible solution for automating business workflows.
+An AI-powered workflow automation tool that streamlines task management through intelligent decomposition, scheduling, and integration with productivity tools.
 
 ## Overview
 
-Task Assist automates the process of breaking down high-level tasks, assigning them, verifying their completion, and scheduling reminders. The system is composed of four primary agents:
-
-- **Task Generator Agent:** Uses NLP via OpenAI and Langchain to decompose tasks into actionable subtasks.
-- **Execution Agent:** Manages the assignment and tracking of subtasks.
-- **Verification Agent:** Confirms task completion through manual or automated checks.
-- **Reminder Agent:** Integrates with Google Calendar to schedule task deadlines and reminders.
-
-This modular design allows for a simple MVP that can be easily extended with more features in future iterations.
+Task Assist breaks down complex tasks into actionable subtasks using AI, tracks their progress, and manages reminders with calendar integration. The application leverages asynchronous processing to handle task scheduling and execution efficiently.
 
 ## Features
 
-- **Task Decomposition:** Leverages OpenAI's API to break down complex tasks.
-- **Task Assignment & Tracking:** Uses a simple execution module to manage task status.
-- **Task Verification:** Provides a basic mechanism to confirm task completion.
-- **Google Calendar Integration:** Schedules reminders and deadlines using the Google Calendar API.
-- **User Interfaces:** Interact via terminal inputs or a simple UI built with Streamlit.
-- **Local Development:** Designed to run on a MacBook using free-tier services and local resources.
-- **Future Enhancements:** Plans to integrate vector databases (e.g., FAISS) for semantic search and enhanced data persistence.
+- **AI-Powered Task Decomposition**: Breaks down high-level tasks into actionable subtasks with priority levels
+- **Web Interface**: Simple dashboard built with Streamlit for task management
+- **Asynchronous Processing**: Uses Celery with Redis for efficient task handling
+- **Scheduled Execution**: Implements APScheduler for timed task execution
+- **Calendar Integration**: Connects with Google Calendar for deadlines and reminders
+- **Notification Support**: Includes Slack notification capabilities
 
-## Tech Stack
+## Technology Stack
 
-- **Language:** Python
-- **Libraries & Tools:**
-  - `python-dotenv` for managing environment variables
-  - `langchain-openai` for NLP and task decomposition
-  - `langchain-community` for managing language model prompts and flows
-  - `streamlit` for building a simple web-based UI
-  - `google-api-python-client` and `google-auth` for Google Calendar integration
-  - `faiss-cpu` (planned for future enhancements)
-- **Optional Tools:**
-  - Docker for containerization
-  - SQLite or JSON files for local data persistence
+- Python
+- LangChain and OpenAI
+- Streamlit
+- Celery and Redis
+- APScheduler
+- Google Calendar API
 
 ## Installation
 
-1. **Clone the Repository:**
-
+1. **Clone the repository**
    ```bash
    git clone https://github.com/yourusername/task-assist.git
    cd task-assist
    ```
 
-2. **Create and Activate a Virtual Environment:**
-
+2. **Set up the environment**
    ```bash
    python3 -m venv venv
    source venv/bin/activate
-   ```
-
-3. **Install the Required Packages:**
-
-   ```bash
    pip install -r requirements.txt
    ```
 
-## Configuration
+3. **Configure environment variables**
+   ```bash
+   cp .env.sample .env
+   # Edit .env with your API keys and configurations
+   ```
 
-1. **Environment Variables:**
-   - Copy `.env.sample` to `.env` and update the API keys and other configurations as needed.
-
-2. **Google Calendar Integration:**
-   - Follow Google’s documentation to set up OAuth credentials.
-   - Save your OAuth token as `token.pickle` in the project root directory.
+4. **Set up Google Calendar (if using reminder features)**
+   - Configure OAuth credentials following Google's documentation
+   - Save OAuth token as `token.pickle` in the project root
 
 ## Usage
 
-### Terminal-Based Interface
-
-Run the main script to interact with Task Assist through the terminal:
-
-```bash
-python execute_and_verify.py
-```
-
-### Streamlit UI
-
-For a web-based interface, run the following command:
-
+### Web Interface
 ```bash
 streamlit run streamlit_app.py
 ```
 
-## Future Enhancements
+### Command Line Interface
+```bash
+python execute_and_verify.py
+```
 
-- **Vector Database Integration:** Use FAISS for advanced semantic search and task similarity matching.
-- **Improved UI/UX:** Enhance the dashboard and user interface for a better experience.
-- **Asynchronous Task Management:** Implement Celery or a similar framework for improved scalability.
-- **Automated Verification:** Develop rule-based or ML-driven methods for task verification.
+### Start Celery Worker (for async processing)
+```bash
+celery -A celery_app worker --loglevel=info
+```
+
+### Start Scheduler
+```bash
+python schedule.py
+```
+
+## Implementation Components
+
+- **generate.py**: AI-based task decomposition
+- **execute_and_verify.py**: Task management and CLI
+- **streamlit_app.py**: Web interface
+- **reminder.py**: Calendar integration
+- **celery_app.py**: Asynchronous task processing
+- **schedule.py**: Task scheduling
 
 ## Contributing
 
-Contributions are welcome! Please fork the repository and submit pull requests with your changes. For significant modifications, open an issue to discuss your ideas beforehand.
-
-Happy Task Managing with Task Assist!
+Contributions welcome. Please fork the repository and submit pull requests.
