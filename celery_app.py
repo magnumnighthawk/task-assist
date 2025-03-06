@@ -8,8 +8,6 @@ app = Celery('tasks', broker='redis://localhost:6379/0')
 # manage google calendar updates, etc
 @app.task
 def async_assign_task(task_data):
-    # Simulate asynchronous assignment processing.
     print(f"Asynchronously assigning task: {task_data['description']} at {datetime.now()}")
     task_data['status'] = "In Progress"
-    # Here, you could add more logic, such as updating a database.
     return task_data
