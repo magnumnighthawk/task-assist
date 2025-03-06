@@ -1,16 +1,29 @@
 from generate import generate_subtasks
+from datetime import datetime
 
 class Task:
-    def __init__(self, description):
-        self.description = description
+    def __init__(self, item: dict, deadline=None):
+        self.description = item['description']
+        self.priority = item['priority'] if 'priority' in item else "Medium"
         self.status = "Pending"
+        self.deadline = deadline  # datetime object or None
+        self.created_at = datetime.now()
 
     def mark_complete(self):
         self.status = "Completed"
 
+    def to_dict(self):
+        return {
+            "description": self.description,
+            "priority": self.priority,
+            "status": self.status,
+            "deadline": self.deadline.isoformat() if self.deadline else None,
+            "created_at": self.created_at.isoformat()
+        }
+
 def display_tasks(tasks):
     for task in tasks:
-        print(f"{task.description} - Status: {task.status}")
+        print(f"{task.description} || Priority: {task.priority} || Status: {task.status}")
 
 def verify_task(task: Task):
     user_input = input(f"Mark task '{task.description}' as complete? (y/n): ")

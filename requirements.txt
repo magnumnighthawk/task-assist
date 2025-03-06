@@ -2,8 +2,10 @@ python-dotenv
 langchain-openai
 langchain-community
 streamlit
-streamlit-sortables
 google-api-python-client
 faiss-cpu
 google-auth-httplib2
 google-auth-oauthlib
+APScheduler
+celery 
+redis
