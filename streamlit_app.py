@@ -1,7 +1,7 @@
 import streamlit as st
 from generate import generate_subtasks
 
-st.set_page_config(page_title="Task assist AI")  # Set the browser tab title
+st.set_page_config(page_title="Task assist AI", page_icon="favicon.png")  # Set the browser tab title
 
 st.title("Task assist AI")
 
