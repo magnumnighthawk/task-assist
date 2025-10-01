@@ -1,5 +1,8 @@
+
 import streamlit as st
 from generate import generate_subtasks
+from reminder import ReminderAgent
+import datetime
 
 st.set_page_config(page_title="Task assist AI", page_icon="favicon.png")  # Set the browser tab title
 
@@ -64,5 +67,41 @@ if 'subtasks' in st.session_state:
                 st.session_state.edit_mode[i], st.session_state.edit_mode[i+1] = st.session_state.edit_mode[i+1], st.session_state.edit_mode[i]
                 st.rerun()
 
-if st.button("Submit"):
-    st.write("Subtasks submitted!")
+
+# Step 1: Capture due date for the work item
+if 'subtasks' in st.session_state and st.session_state.get('subtasks'):
+    due_date = st.date_input("Select due date for the work item:")
+    if st.button("Save Subtasks and Schedule First Event"):
+        # Step 2: Save subtasks (in session state for now)
+        st.session_state.saved_subtasks = st.session_state.subtasks.copy()
+        st.session_state.saved_due_date = due_date
+
+        # Step 3: Calculate event date for first subtask
+        num_subtasks = len(st.session_state.subtasks)
+        if num_subtasks > 0:
+            # Distribute subtasks evenly up to due date
+            today = datetime.date.today()
+            days_total = (due_date - today).days
+            if days_total < num_subtasks:
+                days_total = num_subtasks  # Avoid negative/zero division
+            days_per_subtask = days_total // num_subtasks
+            first_event_date = today + datetime.timedelta(days=days_per_subtask)
+            first_event_datetime = datetime.datetime.combine(first_event_date, datetime.time(8, 0))
+            # Use due date for last subtask if only one
+            if num_subtasks == 1:
+                first_event_datetime = datetime.datetime.combine(due_date, datetime.time(8, 0))
+
+            # Step 4: Create calendar event for first subtask
+            agent = ReminderAgent()
+            first_subtask = st.session_state.subtasks[0]
+            summary = first_subtask['description']
+            start_time = first_event_datetime.isoformat()
+            end_time = (first_event_datetime + datetime.timedelta(hours=1)).isoformat()
+            try:
+                event = agent.create_event(summary, start_time, end_time, description=f"Auto-scheduled by Task Assist. Priority: {first_subtask['priority']}")
+                st.success(f"Calendar event created for first subtask: {summary}")
+                st.write(f"Event link: {event.get('htmlLink')}")
+            except Exception as e:
+                st.error(f"Failed to create calendar event: {e}")
+        else:
+            st.warning("No subtasks to schedule.")

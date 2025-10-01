@@ -5,6 +5,7 @@ __pycache__/
 .env
 credentials.json
 token.pickle
+idea.md
 
 # Ignore pytest cache and virtual environment
 .pytest_cache/

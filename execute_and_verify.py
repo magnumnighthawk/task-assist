@@ -1,4 +1,4 @@
-from generate import generate_subtasks
+from generate import generate_subtasks, revise_subtasks
 from datetime import datetime
 
 class Task:
@@ -37,12 +37,25 @@ def main():
         print("1. Generate tasks")
         print("2. Show current statuses")
         print("3. Update statuses")
-        print("4. Exit")
+        print("4. Revise tasks")
+        print("5. Exit")
         choice = input("Choose an option: ")
 
         if choice == '1':
             description = input("Enter task description: ")
-            tasks = [Task(subtask) for subtask in generate_subtasks(description)]
+            subtasks = generate_subtasks(description)
+            print("Generated Subtasks:")
+            for idx, subtask in enumerate(subtasks, 1):
+                print(f"{idx}. {subtask}")
+            revise = input("Do you want to revise these tasks? (yes/no): ").strip().lower()
+            if revise == "yes":
+                feedback = input("Describe how you want to revise or break down the tasks: ").strip()
+                subtasks = revise_subtasks(subtasks, feedback)
+                print("Revised Subtasks:")
+                for idx, subtask in enumerate(subtasks, 1):
+                    print(f"{idx}. {subtask}")
+            tasks = [Task(subtask) for subtask in subtasks]
+            display_tasks(tasks)
         elif choice == '2':
             display_tasks(tasks)
         elif choice == '3':
@@ -50,6 +63,16 @@ def main():
                 verify_task(task)
                 print(f"Task '{idx+1}' is now {task.status}")
         elif choice == '4':
+            if not tasks:
+                print("No tasks to revise.")
+                continue
+            feedback = input("Describe how you want to revise or break down the tasks: ").strip()
+            subtasks = revise_subtasks([task.to_dict() for task in tasks], feedback)
+            print("Revised Subtasks:")
+            for idx, subtask in enumerate(subtasks, 1):
+                print(f"{idx}. {subtask}")
+            tasks = [Task(subtask) for subtask in subtasks]
+        elif choice == '5':
             break
         else:
             print("Invalid option. Please try again.")
