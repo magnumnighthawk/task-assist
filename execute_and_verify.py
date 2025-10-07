@@ -1,13 +1,23 @@
 from generate import generate_subtasks, revise_subtasks
 from datetime import datetime
 
+
 class Task:
     def __init__(self, item: dict, deadline=None):
         self.description = item['description']
         self.priority = item['priority'] if 'priority' in item else "Medium"
-        self.status = "Pending"
-        self.deadline = deadline  # datetime object or None
-        self.created_at = datetime.now()
+        self.status = item.get('status', "Pending")
+        # Handle due_date if present
+        due_date_str = item.get('due_date')
+        if due_date_str:
+            try:
+                # Try parsing as full datetime first, then as date
+                self.deadline = datetime.fromisoformat(due_date_str)
+            except Exception:
+                self.deadline = None
+        else:
+            self.deadline = deadline  # datetime object or None
+        self.created_at = datetime.fromisoformat(item['created_at']) if 'created_at' in item else datetime.now()
 
     def mark_complete(self):
         self.status = "Completed"
@@ -23,7 +33,8 @@ class Task:
 
 def display_tasks(tasks):
     for task in tasks:
-        print(f"{task.description} || Priority: {task.priority} || Status: {task.status}")
+        deadline_str = f" || Due: {task.deadline.isoformat()}" if task.deadline else ""
+        print(f"{task.description} || Priority: {task.priority} || Status: {task.status}{deadline_str}")
 
 def verify_task(task: Task):
     user_input = input(f"Mark task '{task.description}' as complete? (y/n): ")

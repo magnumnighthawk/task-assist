@@ -1,5 +1,7 @@
+
 import os
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage
@@ -9,13 +11,14 @@ load_dotenv()
 llm = ChatOpenAI()
 
 def generate_subtasks(task_description: str, max_subtasks: int = 5):
+    now = datetime.now().isoformat()
     system_prompt = (
         "You are a JSON formatter. "
         "Break down the following task into a few practical, actionable subtasks that can be added to a calendar or reminder app. "
         "Ensure the subtasks are necessary and avoid over-complicating simple tasks that doesn't overwhelm the calendar. "
         "Focus on key steps that help track and make progress. "
         "The goal is to break-up in parts that can help the user complete the action. "
-        "Too few might feel overwhelming & too much unnessary, so break it up appropriately that can warrant creating calendar event to use for tracking & reminders."
+        "Too few might feel overwhelming & too much unnecessary, so break it up appropriately that can warrant creating calendar event to use for tracking & reminders. "
         "Each subtask must be a JSON object with exactly two keys: 'description' and 'priority'. "
         "The 'description' should be a concise string, and 'priority' should be one of 'High', 'Medium', or 'Low'. "
         "Do not include any additional text, explanations, or markdown formatting in your output. "
@@ -57,6 +60,7 @@ def generate_subtasks(task_description: str, max_subtasks: int = 5):
 
 # New function to revise/modify subtasks
 def revise_subtasks(original_subtasks, feedback, max_subtasks=5):
+    now = datetime.now().isoformat()
     system_prompt = (
         "You are a JSON editor. Given a list of subtasks and user feedback, update the subtasks to better fit the user's needs. "
         "You must output only a valid JSON array of subtasks, each with exactly two keys: 'description' and 'priority'. "
@@ -90,6 +94,7 @@ def revise_subtasks(original_subtasks, feedback, max_subtasks=5):
                 raise ValueError("Missing 'description' key.")
             if 'priority' not in task:
                 task['priority'] = "Medium"
+        # No further processing for due_date; just pass through as generated
     except (json.JSONDecodeError, ValueError) as e:
         print("Error parsing JSON, using fallback parsing method.", e)
         subtasks = []
