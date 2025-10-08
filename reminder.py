@@ -2,6 +2,7 @@ import os
 import pickle
 import datetime
 import requests
+from dotenv import load_dotenv
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -9,6 +10,7 @@ from googleapiclient.discovery import build
 # Define the scopes and timezone.
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 TIMEZONE = 'Europe/London'
+load_dotenv()
 
 def get_calendar_service():
     """Authenticate and return a Google Calendar API service instance."""

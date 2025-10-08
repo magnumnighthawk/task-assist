@@ -62,16 +62,14 @@ def generate_subtasks(task_description: str, max_subtasks: int = 5):
 def revise_subtasks(original_subtasks, feedback, max_subtasks=5):
     now = datetime.now().isoformat()
     system_prompt = (
-        "You are a JSON editor. Given a list of subtasks and user feedback, update the subtasks to better fit the user's needs. "
-        "You must output only a valid JSON array of subtasks, each with exactly two keys: 'description' and 'priority'. "
-        "Do not include any explanations, markdown, or extra text. "
-        "If the user requests a breakdown of a specific subtask, replace that subtask with its breakdown. "
-        "Keep the list concise and actionable for calendar/reminder use. "
-        "Example output:\n\n"
-        "[\n"
-        "  {\"description\": \"Research requirements\", \"priority\": \"High\"},\n"
-        "  {\"description\": \"Draft plan\", \"priority\": \"Medium\"}\n"
-        "]\n"
+            "You are an expert project manager. Given the following subtasks (in JSON), revise them according to the user's feedback. "
+            "Follow these rules strictly: "
+            "- If the user asks to add a new subtask, APPEND it to the list. Do NOT remove or replace any existing subtasks when adding. "
+            "- If the user asks to update or remove a subtask, do so ONLY for the specified subtask(s). "
+            "- Do NOT change, remove, or replace any subtask unless the feedback explicitly requests it. "
+            "- Never replace the entire list unless the user asks for a full rewrite. "
+            "Return the revised list as JSON, with each subtask as an object with 'description' and 'priority'. "
+            f"\n\nCurrent subtasks: {json.dumps(original_subtasks)}\n\nFeedback: {feedback}\n\nRevised subtasks:"
     )
     user_prompt = (
         f"Here are the current subtasks: {json.dumps(original_subtasks, ensure_ascii=False)}\n"
