@@ -30,6 +30,15 @@ def get_calendar_service():
     return service
 
 class ReminderAgent:
+    def fetch_latest_work(self):
+        """Fetch the latest Work item from the database, eagerly loading tasks."""
+        from db import get_db, Work
+        from sqlalchemy.orm import joinedload
+        db_gen = get_db()
+        db = next(db_gen)
+        latest_work = db.query(Work).options(joinedload(Work.tasks)).order_by(Work.created_at.desc()).first()
+        db.close()
+        return latest_work
     def __init__(self):
         self.service = get_calendar_service()
         self.slack_webhook_url = os.getenv('SLACK_WEBHOOK_URL')
@@ -110,6 +119,11 @@ class ReminderAgent:
         else:
             print('Slack notification sent successfully.')
 
+    def send_interactive_work_notification(self, work):
+        """Send an interactive Slack message for due date confirmation and update."""
+        from slack_interactive import send_interactive_work_notification
+        send_interactive_work_notification(work, self.slack_webhook_url)
+
 def main():
     agent = ReminderAgent()
     while True:
@@ -120,17 +134,18 @@ def main():
         print("4. Reschedule an event")
         print("5. List upcoming events")
         print("6. Send a Slack notification")
-        print("7. Exit")
-        
-        choice = input("Choose an option (1-7): ")
-        
+        print("7. Fetch latest Work item and send Slack confirmation")
+        print("8. Exit")
+
+        choice = input("Choose an option (1-8): ")
+
         if choice == '1':
             summary = input("Enter event summary: ")
             start_time = input("Enter start time (YYYY-MM-DDTHH:MM:SS+00:00): ")
             end_time = input("Enter end time (YYYY-MM-DDTHH:MM:SS+00:00): ")
             description = input("Enter event description (optional): ")
             agent.create_event(summary, start_time, end_time, description)
-        
+
         elif choice == '2':
             event_id = input("Enter event ID to update: ")
             updated_data = {}
@@ -147,29 +162,37 @@ def main():
             if end_time:
                 updated_data['end'] = {'dateTime': end_time, 'timeZone': TIMEZONE}
             agent.update_event(event_id, updated_data)
-        
+
         elif choice == '3':
             event_id = input("Enter event ID to delete: ")
             agent.delete_event(event_id)
-        
+
         elif choice == '4':
             event_id = input("Enter event ID to reschedule: ")
             new_start_time = input("Enter new start time (YYYY-MM-DDTHH:MM:SS+00:00): ")
             new_end_time = input("Enter new end time (YYYY-MM-DDTHH:MM:SS+00:00): ")
             agent.reschedule_event(event_id, new_start_time, new_end_time)
-        
+
         elif choice == '5':
             max_results = int(input("Enter the number of upcoming events to list: "))
             agent.list_upcoming_events(max_results)
-        
+
         elif choice == '6':
             message = input("Enter message to send: ")
             agent.send_slack_notification(message)
-        
+
         elif choice == '7':
+            latest_work = agent.fetch_latest_work()
+            if not latest_work:
+                print("No Work items found in the database.")
+            else:
+                agent.send_interactive_work_notification(latest_work)
+                print("Interactive Slack notification sent for latest Work item.\nMake sure the Flask server is running to handle Slack interactivity.")
+
+        elif choice == '8':
             print("Exiting...")
             break
-        
+
         else:
             print("Invalid choice. Please try again.")
 

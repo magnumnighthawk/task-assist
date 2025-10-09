@@ -1,3 +1,5 @@
+Flask
+requests
 python-dotenv
 langchain-openai
 langchain-community
@@ -9,3 +11,4 @@ google-auth-oauthlib
 APScheduler
 celery 
 redis
+SQLAlchemy
