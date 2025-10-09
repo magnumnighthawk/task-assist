@@ -1,3 +1,8 @@
+# --- Health check endpoint ---
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Read-only health check route for deployment verification."""
+    return jsonify({"status": "ok", "message": "Service is healthy."}), 200
 import os
 import pickle
 import datetime

@@ -1,3 +1,5 @@
+# Ignore zip deployment archives
+*.zip
 .env
 __pycache__/
 *.pyc
