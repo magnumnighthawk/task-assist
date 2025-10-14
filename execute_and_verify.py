@@ -1,5 +1,6 @@
-from generate import generate_subtasks, revise_subtasks
+
 from datetime import datetime
+from generate import generate_subtasks, revise_subtasks
 
 
 class Task:

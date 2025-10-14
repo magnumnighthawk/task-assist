@@ -5,8 +5,6 @@ from datetime import datetime
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage
-
-# Import db adapter
 from db import create_work, create_task, get_db
 from sqlalchemy.orm import Session
 

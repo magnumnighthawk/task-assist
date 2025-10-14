@@ -1,3 +1,5 @@
+supervisor
+gunicorn
 Flask
 requests
 python-dotenv

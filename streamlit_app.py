@@ -1,10 +1,10 @@
+
 import streamlit as st
-from generate import generate_subtasks, revise_subtasks
-from reminder import ReminderAgent
 import datetime
 import uuid
-
-# Import db adapter and CRUD
+import requests
+from generate import generate_subtasks, revise_subtasks
+from reminder import ReminderAgent
 from db import create_work, get_db, get_all_works, get_tasks_by_work
 from sqlalchemy.orm import Session
 
@@ -204,6 +204,26 @@ elif page == "View Work & Tasks":
                     db.commit()
                     st.warning("Work deleted.")
                     st.rerun()
+                # Notify button for Slack integration
+                if st.button("Notify", key=f"notify_work_{work.id}"):
+                    import requests
+                    # Use internal Flask address (supervisor runs Flask on 9000)
+                    api_url = f"http://127.0.0.1:9000/api/notify-work/{work.id}"
+                    try:
+                        response = requests.post(api_url)
+                        try:
+                            data = response.json()
+                        except Exception:
+                            data = None
+                        if response.status_code == 200:
+                            st.success("Slack interactive notification sent!")
+                        elif data and 'message' in data:
+                            st.error(f"Failed to send notification: {data['message']}")
+                        else:
+                            st.error(f"Failed to send notification. Status: {response.status_code}. Response: {response.text}")
+                    except Exception as e:
+                        st.error(f"Error calling notify API: {e}")
+
                 # List Tasks
                 tasks = get_tasks_by_work(db, work.id)
                 if not tasks:
