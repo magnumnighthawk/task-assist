@@ -1,0 +1,41 @@
+# Ignore Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore local environment and dependency folders
+venv/
+.env.*
+
+# Ignore database and credentials
+*.db
+task_manager.db
+token.pickle
+
+# Ignore sample env and test files
+.env.sample
+*.log
+
+# Ignore git and editor files
+.git/
+.gitignore
+*.swp
+*.swo
+*.bak
+.DS_Store
+.idea/
+.vscode/
+
+# Ignore other files not needed in the image
+README.md
+ROADMAP.md
+*.md
+*.ipynb
+
+# Do not ignore requirements.txt, Dockerfile, or source code
+!requirements.txt
+!Dockerfile
+!*.py
+!nginx.conf
+!supervisord.conf

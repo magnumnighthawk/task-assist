@@ -1,21 +1,14 @@
 
-import os
-import pickle
 import datetime
 import requests
 import logging
 from dotenv import load_dotenv
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
 from flask import Flask, request, jsonify
-import threading
 
 # Define the scopes and timezone.
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 TIMEZONE = 'Europe/London'
 load_dotenv()
-
 
 # Set up debug logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(message)s')
@@ -27,17 +20,6 @@ def health_check():
     """Read-only health check route for deployment verification."""
     logging.debug("Health check endpoint called.")
     return jsonify({"status": "ok", "message": "Service is healthy."}), 200
-
-# --- IMPORTANT: For Slack interactivity to work, your Flask app must be accessible from the public internet.
-# Use ngrok (https://ngrok.com/) for local development:
-#   ngrok http 5050
-# Then set your Slack app's Interactivity Request URL to:
-#   https://<your-ngrok-subdomain>.ngrok.io/slack/interactivity
-#
-# Watch your Flask logs for incoming POSTs and errors.
-
-# --- Google Calendar/Slack/DB logic (copied from reminder.py, with necessary imports) ---
-# ...existing ReminderAgent and DB logic will be here...
 
 # --- Flask endpoint for Slack interactive events ---
 @app.route('/slack/interactivity', methods=['POST'])
