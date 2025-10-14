@@ -58,8 +58,8 @@ if page == "Task Generator":
             # Ensure every subtask has a uid
             if 'uid' not in subtask:
                 subtask['uid'] = str(uuid.uuid4())
-            # --- Action Panel using st.columns for all actions ---
-            col1, col_due, col_save, col_discard, col_edit, col_delete, col_up, col_down, col_sched = st.columns([5, 2, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 3])
+            # Wider columns for better layout
+            col1, col_due, col_save, col_discard, col_edit, col_delete, col_up, col_down, col_sched = st.columns([5, 3, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 3])
             with col1:
                 if st.session_state.edit_mode[i]:
                     new_subtask = st.text_input("Subtask", value=subtask['description'], key=f"subtask_{subtask['uid']}")
@@ -71,50 +71,44 @@ if page == "Task Generator":
                         unsafe_allow_html=True
                     )
             with col_due:
-                st.markdown(f"<b>Due</b>", unsafe_allow_html=True)
-                due_date = st.date_input(" ", value=st.session_state.subtask_due_dates[i] or datetime.date.today(), key=f"due_date_{subtask['uid']}")
+                # Use a clear label and wider column for datepicker
+                due_date = st.date_input("Due date", value=st.session_state.subtask_due_dates[i] or datetime.date.today(), key=f"due_date_{subtask['uid']}")
                 st.session_state.subtask_due_dates[i] = due_date
+            # Action icon columns: wider, no custom divs, just buttons
             with col_save:
-                st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
                 if st.session_state.edit_mode[i]:
                     if st.button("💾", key=f"save_{i}_{subtask['uid']}", help="Save"):
                         st.session_state.edit_mode[i] = False
                         st.rerun()
             with col_discard:
-                st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
                 if st.session_state.edit_mode[i]:
                     if st.button("❌", key=f"discard_{i}_{subtask['uid']}", help="Discard changes"):
                         st.session_state.edit_mode[i] = False
                         st.rerun()
             with col_edit:
-                st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
                 if not st.session_state.edit_mode[i]:
                     if st.button("✏️", key=f"edit_{i}_{subtask['uid']}", help="Edit"):
                         st.session_state.edit_mode[i] = True
                         st.rerun()
             with col_delete:
-                st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
                 if st.button("🗑️", key=f"delete_{i}_{subtask['uid']}", help="Delete"):
                     st.session_state.subtasks.pop(i)
                     st.session_state.edit_mode.pop(i)
                     st.session_state.subtask_due_dates.pop(i)
                     st.rerun()
             with col_up:
-                st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
                 if st.button("⬆️", key=f"up_{i}_{subtask['uid']}", help="Move up") and i > 0:
                     st.session_state.subtasks[i], st.session_state.subtasks[i-1] = st.session_state.subtasks[i-1], st.session_state.subtasks[i]
                     st.session_state.edit_mode[i], st.session_state.edit_mode[i-1] = st.session_state.edit_mode[i-1], st.session_state.edit_mode[i]
                     st.session_state.subtask_due_dates[i], st.session_state.subtask_due_dates[i-1] = st.session_state.subtask_due_dates[i-1], st.session_state.subtask_due_dates[i]
                     st.rerun()
             with col_down:
-                st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
                 if st.button("⬇️", key=f"down_{i}_{subtask['uid']}", help="Move down") and i < len(st.session_state.subtasks) - 1:
                     st.session_state.subtasks[i], st.session_state.subtasks[i+1] = st.session_state.subtasks[i+1], st.session_state.subtasks[i]
                     st.session_state.edit_mode[i], st.session_state.edit_mode[i+1] = st.session_state.edit_mode[i+1], st.session_state.edit_mode[i]
                     st.session_state.subtask_due_dates[i], st.session_state.subtask_due_dates[i+1] = st.session_state.subtask_due_dates[i+1], st.session_state.subtask_due_dates[i]
                     st.rerun()
             with col_sched:
-                st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
                 schedule_key = f"loading_schedule_{i}_{subtask['uid']}"
                 if schedule_key not in st.session_state:
                     st.session_state[schedule_key] = False
