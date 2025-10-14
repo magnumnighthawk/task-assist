@@ -11,14 +11,18 @@ This document tracks completed features, future improvements, and architectural 
 - Robust error handling and logging for all services
 
 ## 🚧 In Progress / Next
+- [ ] Define/document workflow for a Work item from Creation -> Completion
+- [ ] Document Nudge/Notifications points in the workflow
+- [ ] Read updates from Google calendar to update tasks (Snooze/Completion)
+- [ ] Add scheduling for adding Calendar events, Slack notifications
 - [ ] Advanced Slack workflows (multi-step, reminders, snooze, feedback)
 - [ ] Container image size optimization (multi-stage builds, .dockerignore, Alpine base)
 - [ ] Cloud monitoring and alerting (Azure Monitor, Slack alerts)
 - [ ] Model Context Protocol (MCP) integration
-    - [ ] Evaluate open-source MCP servers
-    - [ ] Write adapters/wrappers for Google services
-    - [ ] Wrap ReminderAgent logic as MCP tool endpoints
-    - [ ] Document MCP integration process
+- [ ] Evaluate open-source MCP servers
+- [ ] Write adapters/wrappers for Google services
+- [ ] Wrap ReminderAgent logic as MCP tool endpoints
+- [ ] Document MCP integration process
 
 ---
 
