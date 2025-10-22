@@ -1,0 +1,105 @@
+version: '3.8'
+services:
+  flask:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flask_app
+    environment:
+      - FLASK_APP=slack_interactive.py
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    ports:
+      - "9000:9000"
+    depends_on:
+      - redis
+    command: flask run --host=0.0.0.0 --port=9000
+    volumes:
+      - .:/app
+      - ./credentials.json:/app/credentials.json
+      - ./token.pickle:/app/token.pickle
+      - ./task_manager.db:/app/task_manager.db
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: streamlit_app
+    environment:
+      - FLASK_API_URL=http://flask:9000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    ports:
+      - "8501:8501"
+    depends_on:
+      - flask
+    command: streamlit run streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    volumes:
+      - .:/app
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celery_worker
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    depends_on:
+      - redis
+      - flask
+    command: celery -A celery_app.app worker --loglevel=info
+    volumes:
+      - .:/app
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scheduler
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    depends_on:
+      - flask
+      - redis
+    command: python schedule.py
+    volumes:
+      - .:/app
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: always

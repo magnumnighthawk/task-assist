@@ -201,8 +201,13 @@ elif page == "View Work & Tasks":
                 # Notify button for Slack integration
                 if st.button("Notify", key=f"notify_work_{work.id}"):
                     import requests
-                    # Use internal Flask address (supervisor runs Flask on 9000)
-                    api_url = f"http://127.0.0.1:9000/api/notify-work/{work.id}"
+                    import os
+                    # Use FLASK_API_URL env var if set, else default to local or docker port
+                    flask_api_base = os.environ.get("FLASK_API_URL")
+                    if not flask_api_base:
+                        # Default: 5050 for local, 9000 for Docker (can be improved with more checks)
+                        flask_api_base = "http://127.0.0.1:5050" if os.environ.get("ENV", "local") == "local" else "http://127.0.0.1:9000"
+                    api_url = f"{flask_api_base}/api/notify-work/{work.id}"
                     try:
                         response = requests.post(api_url)
                         try:
