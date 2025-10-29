@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+  - host: <YOUR_AZURE_DNS_NAME>
+    http:
+      paths:
+      - path: /flask
+        pathType: Prefix
+        backend:
+          service:
+            name: flask-service
+            port:
+              number: 5000
+      - path: /streamlit
+        pathType: Prefix
+        backend:
+          service:
+            name: streamlit-service
+            port:
+              number: 8501
