@@ -9,10 +9,10 @@ This document tracks completed features, future improvements, and architectural 
 - Azure Web App for Containers deployment (cloud-ready, log streaming, env config)
 - Google Calendar integration for reminders and scheduling
 - Robust error handling and logging for all services
+- Define/document workflow for a Work item from Creation -> Completion
+- Document Nudge/Notifications points in the workflow
 
 ## 🚧 In Progress / Next
-- [ ] Define/document workflow for a Work item from Creation -> Completion
-- [ ] Document Nudge/Notifications points in the workflow
 - [ ] Read updates from Google calendar to update tasks (Snooze/Completion)
 - [ ] Add scheduling for adding Calendar events, Slack notifications
 - [ ] Advanced Slack workflows (multi-step, reminders, snooze, feedback)

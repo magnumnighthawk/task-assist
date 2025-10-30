@@ -5,15 +5,9 @@ Task Assist is a personal assistant that helps you break down work into manageab
 
 ## How it Works
 
-- Takes a work & break down into manageable tasks using AI
+- User enters a work item they would like to accomplish & the tool breaks it down into manageable tasks using AI
 - User reviews and approves the breakdown, sets tentative due dates and confirms
-- Work & tasks breakdown is stored and each work is tracked to completion smartly
-- Tasks are added one at a time to Google Calendar & it's progress in monitored.
-- Upon completion, subsequent tasks from the Work are added to tracked to completion
-- Progress is monitored & user is nudged/notified periodically through Slack
-
-## Deployment & Architecture
-
-- Runs as a multi-service Docker container (Flask API, Streamlit UI, Nginx, Supervisor)
-- Deployable to Azure Web App for Containers (cloud-ready, log streaming, environment config)
-- All logs and errors are visible in Azure Log Stream for easy debugging
+- User's work & task breakdown is stored and each work item is tracked to completion smartly
+- User sees tasks added one at a time to their Google Calendar & can monitor progress
+- Upon completion, user gets subsequent tasks from the work item added and tracked to completion
+- Throughout, User receives progress updates & gets nudged/notified periodically through Slack
