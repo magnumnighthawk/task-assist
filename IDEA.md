@@ -11,3 +11,4 @@ Task Assist is a personal assistant that helps you break down work into manageab
 - User sees tasks added one at a time to their Google Calendar & can monitor progress
 - Upon completion, user gets subsequent tasks from the work item added and tracked to completion
 - Throughout, User receives progress updates & gets nudged/notified periodically through Slack
+- Build the core decision making into an AI agent & the interactions & interfaces as tool calls
