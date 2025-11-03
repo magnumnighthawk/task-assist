@@ -34,35 +34,53 @@ Task Assist breaks down complex tasks into actionable subtasks using AI, tracks 
 
 ## Installation
 
+docker build -t task-assist .
+docker run -p 80:80 --env-file .env task-assist
 
-### Local Development
+### Local Development (All-in-One)
 1. **Clone the repository**
    ```bash
    git clone https://github.com/yourusername/task-assist.git
    cd task-assist
    ```
-2. **Set up the environment**
+2. **Install system dependencies**
+   - On macOS:
+     ```bash
+     brew install nginx redis
+     ```
+   - On Linux (Debian/Ubuntu):
+     ```bash
+     sudo apt-get update && sudo apt-get install -y nginx redis-server
+     ```
+   - On Windows: Use WSL or install via package manager.
+3. **Set up Python environment**
    ```bash
    python3 -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
+   pip install honcho
    ```
-3. **Configure environment variables**
+4. **Configure environment variables**
    ```bash
    cp .env.sample .env
    # Edit .env with your API keys and configurations
    ```
-4. **Set up Google Calendar (if using reminder features)**
+5. **Set up Google Calendar (if using reminder features)**
    - Configure OAuth credentials following Google's documentation
    - Save OAuth token as `token.pickle` in the project root
+6. **Start all services locally**
+   ```bash
+   honcho start
+   ```
+   This uses the `Procfile` to launch Flask, Streamlit, Celery, Redis, Nginx, and other services in parallel.
 
 ### Docker (Recommended for Production/Cloud)
 Build and run the multi-service container:
 ```bash
-docker build -t task-assist .
-docker run -p 80:80 --env-file .env task-assist
+podman build -t task-assist .
+podman run -p 8000:8000 --env-file .env task-assist
 ```
-This launches Flask (API), Streamlit (UI), and Nginx (reverse proxy) in one container using Supervisor.
+This launches all services (Flask, Streamlit, Celery, Redis, Nginx, etc.) in a single container using Supervisor. Access the app at `http://localhost:8000`.
 
 ### Azure Web App for Containers
 1. Push your Docker image to a registry (ACR or Docker Hub).

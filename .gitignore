@@ -11,3 +11,9 @@ token.pickle
 # Ignore pytest cache and virtual environment
 .pytest_cache/
 venv/
+
+# Redis database dump
+dump.rdb
+
+# SQLite database
+task_manager.db
