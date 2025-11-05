@@ -63,53 +63,86 @@ class ReminderAgent:
         # changes: list of strings
         msg = f"Updates for Work '{work.title}':\n" + "\n".join(changes)
         self.send_slack_notification(msg)
-    def create_event_for_task(self, task, work_title):
-        """Create a calendar event for a Task and update the DB with the event ID."""
+    def create_event_for_task(self, task, work_title: str):
+        """
+        Create a calendar event for a Task and update the DB with the event ID.
+        """
+        from contextlib import contextmanager
         from db import get_db, update_task_calendar_event
-        db_gen = get_db()
-        db = next(db_gen)
+
+        @contextmanager
+        def db_session():
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                yield db
+            finally:
+                db.close()
+
         summary = f"{work_title}: {task.title}"
         start_time = task.due_date.isoformat() if task.due_date else (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat()
         end_time = (task.due_date + datetime.timedelta(hours=1)).isoformat() if task.due_date else (datetime.datetime.utcnow() + datetime.timedelta(days=1, hours=1)).isoformat()
         event = self.create_event(summary, start_time, end_time, description=None)
-        update_task_calendar_event(db, task.id, event['id'])
-        db.close()
+        with db_session() as db:
+            update_task_calendar_event(db, task.id, event['id'])
         return event
 
     def complete_task_and_schedule_next(self, task, work):
-        """Mark task as completed, create event for next task if any, and update work status if all done."""
+        """
+        Mark task as completed, create event for next task if any, and update work status if all done.
+        """
+        from contextlib import contextmanager
         from db import get_db, update_task_status, get_tasks_by_work, complete_work
-        db_gen = get_db()
-        db = next(db_gen)
-        update_task_status(db, task.id, 'Completed')
-        # Find next uncompleted task
-        tasks = get_tasks_by_work(db, work.id)
-        next_task = next((t for t in tasks if t.status != 'Completed'), None)
-        if next_task:
-            self.create_event_for_task(next_task, work.title)
-            update_task_status(db, next_task.id, 'Tracked')
-        else:
-            complete_work(db, work.id)
-        db.close()
 
-    def snooze_task(self, task, work, days=1):
-        """Snooze a task by moving its event and due date, increment snooze count, and send follow-up if needed."""
+        @contextmanager
+        def db_session():
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                yield db
+            finally:
+                db.close()
+
+        with db_session() as db:
+            update_task_status(db, task.id, 'Completed')
+            # Find next uncompleted task
+            tasks = get_tasks_by_work(db, work.id)
+            next_task = next((t for t in tasks if t.status != 'Completed'), None)
+            if next_task:
+                self.create_event_for_task(next_task, work.title)
+                update_task_status(db, next_task.id, 'Tracked')
+            else:
+                complete_work(db, work.id)
+
+    def snooze_task(self, task, work, days: int = 1):
+        """
+        Snooze a task by moving its event and due date, increment snooze count, and send follow-up if needed.
+        """
+        from contextlib import contextmanager
         from db import get_db, increment_task_snooze, update_task_status
-        db_gen = get_db()
-        db = next(db_gen)
+
+        @contextmanager
+        def db_session():
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                yield db
+            finally:
+                db.close()
+
         new_due = (task.due_date or datetime.datetime.utcnow()) + datetime.timedelta(days=days)
         # Update event
         if task.calendar_event_id:
             self.reschedule_event(task.calendar_event_id, new_due.isoformat(), (new_due + datetime.timedelta(hours=1)).isoformat())
         # Update task due date and snooze count
-        task.due_date = new_due
-        increment_task_snooze(db, task.id)
-        db.commit()
-        # If snoozed > 3 times, send follow-up and allow user to break up or update Work
-        if task.snooze_count >= 3:
-            self.notify_snooze_followup(task, work)
-            # Optionally, trigger a workflow to break up or update the Work (could be a Slack action or UI prompt)
-        db.close()
+        with db_session() as db:
+            task.due_date = new_due
+            increment_task_snooze(db, task.id)
+            db.commit()
+            # If snoozed > 3 times, send follow-up and allow user to break up or update Work
+            if task.snooze_count >= 3:
+                self.notify_snooze_followup(task, work)
+                # Optionally, trigger a workflow to break up or update the Work (could be a Slack action or UI prompt)
 
     def sync_event_update_to_db(self, event_id, updates):
         """When a calendar event is updated directly, sync changes to the DB (due date, title, description, completion, deletion, snooze)."""

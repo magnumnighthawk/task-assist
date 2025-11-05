@@ -97,17 +97,27 @@ Access at `http://localhost/` (or your Azure Web App URL). Manage tasks, works, 
 - Use the "Notify" button in the UI to send interactive Slack messages for due date confirmation and updates.
 - Slack users can update due dates directly from Slack; changes sync back to the database.
 
-## Implementation Components
+
+## Implementation Components & Conventions
 
 - **generate.py**: AI-based task decomposition
 - **execute_and_verify.py**: Task management and CLI
-- **streamlit_app.py**: Web interface (UI)
-- **reminder.py**: Calendar and Slack integration
-- **slack_interactive.py**: Flask API for Slack endpoints and notifications
-- **celery_app.py**: Asynchronous task processing
+- **streamlit_app.py**: Modern, accessible web UI (Streamlit) with custom CSS, improved layout, and tooltips
+- **reminder.py**: Calendar and Slack integration, now using context-managed DB sessions and robust error handling
+- **slack_interactive.py**: Flask API for Slack endpoints and notifications, with standardized integration patterns and context-managed DB sessions
+- **celery_app.py**: Asynchronous task processing, improved logging, and error handling
 - **schedule.py**: Task scheduling
 - **supervisord.conf**: Multi-service process management
 - **nginx.conf**: Reverse proxy for Flask and Streamlit
+
+### New Conventions & Breaking Changes
+- **Database sessions**: All DB access now uses context managers for safety and clarity (see `reminder.py`, `slack_interactive.py`, `celery_app.py`).
+- **Error handling**: All major integrations and endpoints use robust try/except blocks and log exceptions with context.
+- **Logging**: Standardized logging format and levels across all services.
+- **UI/UX**: Streamlit UI is now modernized with custom CSS, improved spacing, color, and accessibility. All interactive elements have tooltips and improved feedback.
+- **Integration patterns**: Slack and Google Calendar integrations are modular, with clear error handling and retry logic where appropriate.
+
+Refer to `docs/LIFECYCLE.md` and in-code docstrings for more on the canonical flow and new best practices.
 
 ## Contributing
 

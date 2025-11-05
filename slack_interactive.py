@@ -63,17 +63,26 @@ def slack_interactivity():
                         logging.error(f"Error parsing datepicker in state: {e}")
         logging.debug(f"Parsed work_id: {work_id}, due_dates: {due_dates}")
         if due_dates:
-            try:
-                from db import get_db, Task
+            from contextlib import contextmanager
+            from db import get_db, Task
+
+            @contextmanager
+            def db_session():
                 db_gen = get_db()
                 db = next(db_gen)
-                for task_id, due_str in due_dates.items():
-                    task = db.query(Task).filter(Task.id == task_id).first()
-                    if task:
-                        logging.debug(f"Updating Task {task_id} due_date to {due_str}")
-                        task.due_date = datetime.datetime.strptime(due_str, '%Y-%m-%d')
-                db.commit()
-                db.close()
+                try:
+                    yield db
+                finally:
+                    db.close()
+
+            try:
+                with db_session() as db:
+                    for task_id, due_str in due_dates.items():
+                        task = db.query(Task).filter(Task.id == task_id).first()
+                        if task:
+                            logging.debug(f"Updating Task {task_id} due_date to {due_str}")
+                            task.due_date = datetime.datetime.strptime(due_str, '%Y-%m-%d')
+                    db.commit()
                 # Respond to Slack
                 slack_response = requests.post(response_url, json={
                     "text": f"Due dates updated for Work ID {work_id} by {user}."
@@ -95,15 +104,24 @@ def slack_interactivity():
 @app.route('/api/notify-work/<int:work_id>', methods=['POST'])
 def notify_work(work_id):
     """Trigger the interactive Slack notification for a specific work item."""
-    try:
-        from reminder import ReminderAgent
-        from db import get_db, Work
-        from sqlalchemy.orm import joinedload
-        agent = ReminderAgent()
+    from contextlib import contextmanager
+    from reminder import ReminderAgent
+    from db import get_db, Work
+    from sqlalchemy.orm import joinedload
+
+    @contextmanager
+    def db_session():
         db_gen = get_db()
         db = next(db_gen)
-        work = db.query(Work).options(joinedload(Work.tasks)).filter(Work.id == work_id).first()
-        db.close()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    try:
+        agent = ReminderAgent()
+        with db_session() as db:
+            work = db.query(Work).options(joinedload(Work.tasks)).filter(Work.id == work_id).first()
         if not work:
             logging.warning(f"No work found with id {work_id}.")
             return jsonify({"status": "error", "message": f"No work found with id {work_id}."}), 404

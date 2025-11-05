@@ -8,22 +8,99 @@ from reminder import ReminderAgent
 from db import create_work, get_db, get_all_works, get_tasks_by_work
 from sqlalchemy.orm import Session
 
-st.set_page_config(page_title="Task assist AI", page_icon="favicon.png")
+
+# --- Custom CSS for modern look ---
+st.set_page_config(page_title="Task Assist AI", page_icon="favicon.png")
+st.markdown(
+    """
+    <style>
+    html, body, [class*="css"]  {
+        font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+        background-color: #f7f9fa;
+    }
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 900px;
+    }
+    h1, h2, h3, h4 {
+        font-weight: 700;
+        color: #1a202c;
+        letter-spacing: -1px;
+    }
+    .stButton>button {
+        background: linear-gradient(90deg, #4f8cff 0%, #38b2ac 100%);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 0.5rem 1.2rem;
+        font-weight: 600;
+        transition: box-shadow 0.2s;
+        box-shadow: 0 2px 8px rgba(80,120,200,0.07);
+    }
+    .stButton>button:hover {
+        box-shadow: 0 4px 16px rgba(80,120,200,0.15);
+        background: linear-gradient(90deg, #38b2ac 0%, #4f8cff 100%);
+    }
+    .stTextInput>div>div>input {
+        border-radius: 6px;
+        border: 1px solid #cbd5e1;
+        padding: 0.4rem 0.8rem;
+    }
+    .stDateInput>div>input {
+        border-radius: 6px;
+        border: 1px solid #cbd5e1;
+        padding: 0.4rem 0.8rem;
+    }
+    .stSelectbox>div>div>div {
+        border-radius: 6px;
+        border: 1px solid #cbd5e1;
+    }
+    .stMarkdown h2 {
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+    .priority-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.9em;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+    .priority-high { background: #ff4d4f; color: white; }
+    .priority-medium { background: #ffb020; color: #222; }
+    .priority-low { background: #38b2ac; color: white; }
+    .status-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 4px;
+        font-size: 0.95em;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+    .status-draft { background: #cbd5e1; color: #222; }
+    .status-published { background: #4f8cff; color: white; }
+    .status-completed { background: #38b2ac; color: white; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # --- Page Navigation ---
 page = st.sidebar.radio("Navigation", ["Task Generator", "View Work & Tasks"])
 
 if page == "Task Generator":
-    st.title("Task assist AI")
-    task_description = st.text_input("Enter a new task:")
-    max_subtasks = st.number_input("Enter the maximum number of subtasks:", min_value=1, step=1, value=5)
+    st.markdown("<h1>Task Assist AI</h1>", unsafe_allow_html=True)
+    task_description = st.text_input("Enter a new task:", help="Describe the high-level task you want to break down.")
+    max_subtasks = st.number_input("Maximum subtasks:", min_value=1, step=1, value=5, help="How many subtasks should be generated?")
 
     if 'loading_generate' not in st.session_state:
         st.session_state.loading_generate = False
     if st.session_state.loading_generate:
         with st.spinner("Generating subtasks..."):
             pass
-    if st.button("Generate Subtasks"):
+    if st.button("Generate Subtasks", help="Use AI to break down your task into actionable subtasks."):
         st.session_state.loading_generate = True
         with st.spinner("Generating subtasks..."):
             result = generate_subtasks(task_description, max_subtasks=max_subtasks)
@@ -41,14 +118,14 @@ if page == "Task Generator":
         st.rerun()
 
 
-    def get_priority_color(priority):
+    def get_priority_class(priority):
         if priority == "High":
-            return "red"
+            return "priority-badge priority-high"
         elif priority == "Medium":
-            return "orange"
+            return "priority-badge priority-medium"
         elif priority == "Low":
-            return "green"
-        return "gray"
+            return "priority-badge priority-low"
+        return "priority-badge"
 
     if 'subtasks' in st.session_state:
         st.write("Generated Subtasks:")
@@ -58,52 +135,51 @@ if page == "Task Generator":
             # Ensure every subtask has a uid
             if 'uid' not in subtask:
                 subtask['uid'] = str(uuid.uuid4())
-            # Wider columns for better layout
             col1, col_due, col_save, col_discard, col_edit, col_delete, col_up, col_down, col_sched = st.columns([5, 3, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 3])
             with col1:
                 if st.session_state.edit_mode[i]:
                     new_subtask = st.text_input("Subtask", value=subtask['description'], key=f"subtask_{subtask['uid']}")
                     st.session_state.subtasks[i]['description'] = new_subtask
                 else:
-                    priority_color = get_priority_color(subtask['priority'])
+                    priority_class = get_priority_class(subtask['priority'])
                     st.markdown(
-                        f"{subtask['description']} <span style='background-color:{priority_color}; padding: 2px 4px; border-radius: 4px; margin-left: 8px;'>{subtask['priority']}</span>",
+                        f"<span style='font-size:1.1em;font-weight:500'>{subtask['description']}</span> "
+                        f"<span class='{priority_class}'>{subtask['priority']}</span>",
                         unsafe_allow_html=True
                     )
             with col_due:
-                # Use a clear label and wider column for datepicker
-                due_date = st.date_input("Due date", value=st.session_state.subtask_due_dates[i] or datetime.date.today(), key=f"due_date_{subtask['uid']}")
+                due_date = st.date_input("Due date", value=st.session_state.subtask_due_dates[i] or datetime.date.today(), key=f"due_date_{subtask['uid']}", help="When should this subtask be completed?")
                 st.session_state.subtask_due_dates[i] = due_date
-            # Action icon columns: wider, no custom divs, just buttons
+            # Action icon columns
             with col_save:
                 if st.session_state.edit_mode[i]:
-                    if st.button("💾", key=f"save_{i}_{subtask['uid']}", help="Save"):
+                    if st.button("💾", key=f"save_{i}_{subtask['uid']}", help="Save changes to this subtask."):
                         st.session_state.edit_mode[i] = False
                         st.rerun()
             with col_discard:
                 if st.session_state.edit_mode[i]:
-                    if st.button("❌", key=f"discard_{i}_{subtask['uid']}", help="Discard changes"):
+                    if st.button("❌", key=f"discard_{i}_{subtask['uid']}", help="Discard changes to this subtask."):
                         st.session_state.edit_mode[i] = False
                         st.rerun()
             with col_edit:
                 if not st.session_state.edit_mode[i]:
-                    if st.button("✏️", key=f"edit_{i}_{subtask['uid']}", help="Edit"):
+                    if st.button("✏️", key=f"edit_{i}_{subtask['uid']}", help="Edit this subtask."):
                         st.session_state.edit_mode[i] = True
                         st.rerun()
             with col_delete:
-                if st.button("🗑️", key=f"delete_{i}_{subtask['uid']}", help="Delete"):
+                if st.button("🗑️", key=f"delete_{i}_{subtask['uid']}", help="Delete this subtask."):
                     st.session_state.subtasks.pop(i)
                     st.session_state.edit_mode.pop(i)
                     st.session_state.subtask_due_dates.pop(i)
                     st.rerun()
             with col_up:
-                if st.button("⬆️", key=f"up_{i}_{subtask['uid']}", help="Move up") and i > 0:
+                if st.button("⬆️", key=f"up_{i}_{subtask['uid']}", help="Move this subtask up") and i > 0:
                     st.session_state.subtasks[i], st.session_state.subtasks[i-1] = st.session_state.subtasks[i-1], st.session_state.subtasks[i]
                     st.session_state.edit_mode[i], st.session_state.edit_mode[i-1] = st.session_state.edit_mode[i-1], st.session_state.edit_mode[i]
                     st.session_state.subtask_due_dates[i], st.session_state.subtask_due_dates[i-1] = st.session_state.subtask_due_dates[i-1], st.session_state.subtask_due_dates[i]
                     st.rerun()
             with col_down:
-                if st.button("⬇️", key=f"down_{i}_{subtask['uid']}", help="Move down") and i < len(st.session_state.subtasks) - 1:
+                if st.button("⬇️", key=f"down_{i}_{subtask['uid']}", help="Move this subtask down") and i < len(st.session_state.subtasks) - 1:
                     st.session_state.subtasks[i], st.session_state.subtasks[i+1] = st.session_state.subtasks[i+1], st.session_state.subtasks[i]
                     st.session_state.edit_mode[i], st.session_state.edit_mode[i+1] = st.session_state.edit_mode[i+1], st.session_state.edit_mode[i]
                     st.session_state.subtask_due_dates[i], st.session_state.subtask_due_dates[i+1] = st.session_state.subtask_due_dates[i+1], st.session_state.subtask_due_dates[i]
@@ -115,7 +191,7 @@ if page == "Task Generator":
                 if st.session_state[schedule_key]:
                     with st.spinner("Scheduling event..."):
                         pass
-                if st.button("Add to Calendar", key=f"schedule_{i}_{subtask['uid']}", help="Add to Calendar"):
+                if st.button("Add to Calendar", key=f"schedule_{i}_{subtask['uid']}", help="Schedule this subtask as a Google Calendar event."):
                     st.session_state[schedule_key] = True
                     with st.spinner("Scheduling event..."):
                         agent = ReminderAgent()
@@ -131,27 +207,29 @@ if page == "Task Generator":
                     st.session_state[schedule_key] = False
                     st.rerun()
 
+    # Show only when generated subtasks exist
+    if 'subtasks' in st.session_state and st.session_state.subtasks:
         with st.expander("Revise Subtasks", expanded=False):
-            feedback = st.text_area("Describe how you want to revise or break down the subtasks (specify which if needed):", key="revise_feedback")
-            if st.button("Revise Subtasks"):
-                st.session_state.loading_revise = True
-                with st.spinner("Revising subtasks..."):
-                    revised_result = revise_subtasks(st.session_state.subtasks, feedback, max_subtasks=len(st.session_state.subtasks))
-                    revised_subtasks = revised_result['subtasks']
-                    # Assign a unique uid to each revised subtask if missing
-                    for sub in revised_subtasks:
-                        if 'uid' not in sub:
-                            sub['uid'] = str(uuid.uuid4())
-                    print('REVISED SUBTASKS:', revised_subtasks)
-                    st.session_state.subtasks = revised_subtasks
-                    st.session_state.edit_mode = [False] * len(revised_subtasks)
-                    st.session_state.subtask_due_dates = [None] * len(revised_subtasks)
-                st.success("Subtasks revised.")
-                st.session_state.loading_revise = False
-                st.rerun()
+                feedback = st.text_area("Describe how you want to revise or break down the subtasks (specify which if needed):", key="revise_feedback", help="Give feedback to improve or split subtasks.")
+                if st.button("Revise Subtasks", help="Use AI to revise the generated subtasks."):
+                    st.session_state.loading_revise = True
+                    with st.spinner("Revising subtasks..."):
+                        revised_result = revise_subtasks(st.session_state.subtasks, feedback, max_subtasks=len(st.session_state.subtasks))
+                        revised_subtasks = revised_result['subtasks']
+                        # Assign a unique uid to each revised subtask if missing
+                        for sub in revised_subtasks:
+                            if 'uid' not in sub:
+                                sub['uid'] = str(uuid.uuid4())
+                        print('REVISED SUBTASKS:', revised_subtasks)
+                        st.session_state.subtasks = revised_subtasks
+                        st.session_state.edit_mode = [False] * len(revised_subtasks)
+                        st.session_state.subtask_due_dates = [None] * len(revised_subtasks)
+                    st.success("Subtasks revised.")
+                    st.session_state.loading_revise = False
+                    st.rerun()
 
         # --- Submit to DB ---
-        if st.button("Submit"):
+    if st.button("Submit", help="Save this work and its subtasks to the database."):
             db_gen = get_db()
             db: Session = next(db_gen)
             work_title = st.session_state.get('llm_work_name', task_description) or "Untitled Work"
@@ -164,17 +242,18 @@ if page == "Task Generator":
                     "status": "pending",
                     "due_date": due_date
                 })
+
             work = create_work(db, title=work_title, description=work_desc, tasks=tasks)
             st.success(f"Work and tasks saved to database (Work ID: {work.id})")
 
-        if 'loading_revise' not in st.session_state:
-            st.session_state.loading_revise = False
-        if st.session_state.loading_revise:
-            with st.spinner("Revising subtasks..."):
-                pass
+    if 'loading_revise' not in st.session_state:
+        st.session_state.loading_revise = False
+    if st.session_state.loading_revise:
+        with st.spinner("Revising subtasks..."):
+            pass
 
 elif page == "View Work & Tasks":
-    st.title("Work & Tasks List")
+    st.markdown("<h1>Work & Tasks List</h1>", unsafe_allow_html=True)
     db_gen = get_db()
     db: Session = next(db_gen)
     works = get_all_works(db)
@@ -184,46 +263,56 @@ elif page == "View Work & Tasks":
         for work in works:
             with st.expander(f"{work.title} (ID: {work.id})", expanded=False):
                 # Status indicator
-                status_color = {
-                    "Draft": "gray",
-                    "Published": "blue",
-                    "Completed": "green"
-                }.get(work.status, "black")
-                st.markdown(f"<b>Status:</b> <span style='color:{status_color}; font-weight:bold'>{work.status}</span>", unsafe_allow_html=True)
+                status_class = {
+                    "Draft": "status-badge status-draft",
+                    "Published": "status-badge status-published",
+                    "Completed": "status-badge status-completed"
+                }.get(work.status, "status-badge")
+                st.markdown(f"<b>Status:</b> <span class='{status_class}'>{work.status}</span>", unsafe_allow_html=True)
                 st.write(f"**Description:** {work.description}")
-                st.write(f"**Created:** {work.created_at}")
+                st.caption(f"Created: {work.created_at}")
                 # Edit Work title/desc
-                edit_title = st.text_input("Edit Title", value=work.title, key=f"edit_title_{work.id}")
-                edit_desc = st.text_area("Edit Description", value=work.description, key=f"edit_desc_{work.id}")
-                if st.button("Save Changes", key=f"save_work_{work.id}"):
+                edit_title = st.text_input("Edit Title", value=work.title, key=f"edit_title_{work.id}", help="Edit the work title.")
+                edit_desc = st.text_area("Edit Description", value=work.description, key=f"edit_desc_{work.id}", help="Edit the work description.")
+                # ACTION: Group action buttons together more closely
+                if st.button("Save Changes", key=f"save_work_{work.id}", help="Save changes to this work."):
                     work.title = edit_title
                     work.description = edit_desc
                     db.commit()
                     st.success("Work updated.")
-                if st.button("Delete Work", key=f"delete_work_{work.id}"):
+                if st.button("Delete Work", key=f"delete_work_{work.id}", help="Delete this work and all its tasks."):
                     db.delete(work)
                     db.commit()
                     st.warning("Work deleted.")
                     st.rerun()
                 # Publish button only for Draft work
                 if work.status == "Draft":
-                    if st.button("Publish", key=f"publish_work_{work.id}"):
+                    if st.button("Publish", key=f"publish_work_{work.id}", help="Publish this work and notify via Slack/Calendar."):
                         from db import publish_work, get_tasks_by_work
                         from reminder import ReminderAgent
                         publish_work(db, work.id)
                         db.commit()
-                        # Create calendar event for first task
+                        # Create calendar event for first task and set its status to 'Tracked'
                         tasks = get_tasks_by_work(db, work.id)
                         if tasks:
                             agent = ReminderAgent()
-                            event = agent.create_event_for_task(tasks[0], work.title)
+                            # Set first task to 'Tracked', others remain 'Published'
+                            first = True
+                            for t in tasks:
+                                if first:
+                                    t.status = 'Tracked'
+                                    event = agent.create_event_for_task(t, work.title)
+                                    first = False
+                                else:
+                                    t.status = 'Published'
+                            db.commit()
                             agent.send_interactive_work_notification(work)
                             st.success("Work published, calendar event created, and Slack notified!")
                         else:
                             st.success("Work published, but no tasks to schedule.")
                         st.rerun()
                 # Notify button for Slack integration
-                if st.button("Notify", key=f"notify_work_{work.id}"):
+                if st.button("Notify", key=f"notify_work_{work.id}", help="Send a Slack notification for this work."):
                     import requests
                     import os
                     # Use FLASK_API_URL env var if set, else default to local or docker port
@@ -255,23 +344,31 @@ elif page == "View Work & Tasks":
                     for task in tasks:
                         col1, col2, col3, col4 = st.columns([4, 2, 2, 3])
                         with col1:
-                            edit_task_title = st.text_input("Task", value=task.title, key=f"task_title_{task.id}")
-                            with col2:
-                                edit_task_status = st.selectbox("Status", ["pending", "done"], index=0 if task.status=="pending" else 1, key=f"task_status_{task.id}")
+                            edit_task_title = st.text_input("Task", value=task.title, key=f"task_title_{task.id}", help="Edit the task title.")
+                        with col2:
+                            st.markdown("<div style='margin-bottom: -18px'></div>", unsafe_allow_html=True)
+                            status_options = ["Published", "Tracked", "Completed"]
+                            status_index = status_options.index(task.status) if task.status in status_options else 0
+                            edit_task_status = st.selectbox("Status", status_options, index=status_index, key=f"task_status_{task.id}", help="Update the task status.")
                         with col3:
-                            # Show due date if available
                             if task.due_date:
-                                st.markdown(f"<b>Due date:</b> {task.due_date.strftime('%Y-%m-%d')}", unsafe_allow_html=True)
+                                edit_task_due_date = st.date_input("Due date", value=task.due_date, key=f"task_due_date_{task.id}", help="Edit the task due date.")
                             else:
+                                edit_task_due_date = None
                                 st.markdown("<b>Due date:</b> -", unsafe_allow_html=True)
                         with col4:
-                            if st.button("Save", key=f"save_task_{task.id}"):
-                                task.title = edit_task_title
-                                task.status = edit_task_status
-                                db.commit()
-                                st.success("Task updated.")
-                            if st.button("Delete", key=f"delete_task_{task.id}"):
-                                db.delete(task)
-                                db.commit()
-                                st.warning("Task deleted.")
-                                st.rerun()
+                            task_action_col1, task_action_col2 = st.columns([1,1])
+                            with task_action_col1:
+                                if st.button("Save", key=f"save_task_{task.id}", help="Save changes to this task."):
+                                    task.title = edit_task_title
+                                    task.status = edit_task_status
+                                    if edit_task_due_date is not None:
+                                        task.due_date = edit_task_due_date
+                                    db.commit()
+                                    st.success("Task updated.")
+                            with task_action_col2:
+                                if st.button("Delete", key=f"delete_task_{task.id}", help="Delete this task."):
+                                    db.delete(task)
+                                    db.commit()
+                                    st.warning("Task deleted.")
+                                    st.rerun()
