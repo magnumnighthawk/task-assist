@@ -1,6 +1,5 @@
 # Task Assist
 
-
 An AI-powered workflow automation tool that streamlines task management through intelligent decomposition, scheduling, Slack notifications, and integration with productivity tools. The app runs as a multi-service container (Flask API, Streamlit UI, Nginx reverse proxy) and is deployable to Azure Web App for Containers.
 
 ## Overview
@@ -90,7 +89,6 @@ This launches all services (Flask, Streamlit, Celery, Redis, Nginx, etc.) in a s
 
 ## Usage
 
-
 ### Web Interface (Streamlit)
 Access at `http://localhost/` (or your Azure Web App URL). Manage tasks, works, and trigger Slack notifications from the UI.
 
@@ -98,26 +96,6 @@ Access at `http://localhost/` (or your Azure Web App URL). Manage tasks, works, 
 - Configure your Slack app and set the interactivity endpoint to `/slack/interactivity` (e.g., `https://<your-app>.azurewebsites.net/slack/interactivity`).
 - Use the "Notify" button in the UI to send interactive Slack messages for due date confirmation and updates.
 - Slack users can update due dates directly from Slack; changes sync back to the database.
-
-### API Endpoints (Flask)
-- `/api/notify-work/<work_id>`: Trigger Slack notification for a specific work item.
-- `/api/notify-latest-work`: Trigger Slack notification for the latest work item.
-- `/health`: Health check endpoint.
-
-### Command Line Interface
-```bash
-python execute_and_verify.py
-```
-
-### Start Celery Worker (for async processing)
-```bash
-celery -A celery_app worker --loglevel=info
-```
-
-### Start Scheduler
-```bash
-python schedule.py
-```
 
 ## Implementation Components
 

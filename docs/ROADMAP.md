@@ -1,4 +1,3 @@
-
 # Roadmap / TODO
 
 This document tracks completed features, future improvements, and architectural considerations for the project.
@@ -12,7 +11,7 @@ This document tracks completed features, future improvements, and architectural 
 - Define/document workflow for a Work item from Creation -> Completion
 - Document Nudge/Notifications points in the workflow
 
-## 🚧 In Progress / Next
+## 🛠 In Progress / Next
 - [ ] Read updates from Google calendar to update tasks (Snooze/Completion)
 - [ ] Add scheduling for adding Calendar events, Slack notifications
 - [ ] Advanced Slack workflows (multi-step, reminders, snooze, feedback)

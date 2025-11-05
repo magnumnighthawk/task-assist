@@ -1,4 +1,3 @@
-
 # Task Assist: Concept & Real-World Flow
 
 Task Assist is a personal assistant that helps you break down work into manageable actions, track progress, and get reminders/notifications via Slack and calendar.

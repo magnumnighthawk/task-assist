@@ -13,55 +13,55 @@ This guide helps you deploy the Task Manager application (Flask, Streamlit, Cele
 ## 1. Build and Push Docker Images to Azure Container Registry (ACR)
 
 1. Create a free-tier ACR:
-   ```sh
-   az acr create --resource-group <resource-group> --name <ACR_NAME> --sku Basic
-   ```
+	```sh
+	az acr create --resource-group <resource-group> --name <ACR_NAME> --sku Basic
+	```
 2. Log in to ACR:
-   ```sh
-   az acr login --name <ACR_NAME>
-   ```
+	```sh
+	az acr login --name <ACR_NAME>
+	```
 3. Build and tag images:
-   ```sh
-   docker build -t <ACR_NAME>.azurecr.io/flask-app:latest -f Dockerfile .
-   docker build -t <ACR_NAME>.azurecr.io/streamlit-app:latest -f Dockerfile .
-   docker build -t <ACR_NAME>.azurecr.io/celery-worker:latest -f Dockerfile .
-   ```
+	```sh
+	docker build -t <ACR_NAME>.azurecr.io/flask-app:latest -f Dockerfile .
+	docker build -t <ACR_NAME>.azurecr.io/streamlit-app:latest -f Dockerfile .
+	docker build -t <ACR_NAME>.azurecr.io/celery-worker:latest -f Dockerfile .
+	```
 4. Push images:
-   ```sh
-   docker push <ACR_NAME>.azurecr.io/flask-app:latest
-   docker push <ACR_NAME>.azurecr.io/streamlit-app:latest
-   docker push <ACR_NAME>.azurecr.io/celery-worker:latest
-   ```
+	```sh
+	docker push <ACR_NAME>.azurecr.io/flask-app:latest
+	docker push <ACR_NAME>.azurecr.io/streamlit-app:latest
+	docker push <ACR_NAME>.azurecr.io/celery-worker:latest
+	```
 
 ---
 
 ## 2. Create AKS Cluster (Cheapest Option)
 
 1. Create resource group:
-   ```sh
-   az group create --name <resource-group> --location <location>
-   ```
+	```sh
+	az group create --name <resource-group> --location <location>
+	```
 2. Create AKS cluster (smallest VM):
-   ```sh
-   az aks create --resource-group <resource-group> --name <aks-name> --node-count 1 --node-vm-size Standard_B2s --generate-ssh-keys --attach-acr <ACR_NAME>
-   ```
+	```sh
+	az aks create --resource-group <resource-group> --name <aks-name> --node-count 1 --node-vm-size Standard_B2s --generate-ssh-keys --attach-acr <ACR_NAME>
+	```
 3. Get AKS credentials:
-   ```sh
-   az aks get-credentials --resource-group <resource-group> --name <aks-name>
-   ```
+	```sh
+	az aks get-credentials --resource-group <resource-group> --name <aks-name>
+	```
 
 ---
 
 ## 3. Deploy Kubernetes Manifests
 
 1. Apply all manifests:
-   ```sh
-   kubectl apply -f k8s/
-   ```
+	```sh
+	kubectl apply -f k8s/
+	```
 2. (Optional) Install NGINX Ingress Controller:
-   ```sh
-   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.0/deploy/static/provider/cloud/deploy.yaml
-   ```
+	```sh
+	kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.0/deploy/static/provider/cloud/deploy.yaml
+	```
 3. Update DNS or use external IP from Ingress for access.
 
 ---
@@ -94,3 +94,4 @@ az group delete --name <resource-group>
 - [AKS Pricing](https://azure.microsoft.com/en-us/pricing/details/kubernetes-service/)
 - [Azure Free Services](https://azure.microsoft.com/en-us/free/)
 - [Azure Cache for Redis](https://azure.microsoft.com/en-us/services/cache/)
+
