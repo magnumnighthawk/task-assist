@@ -183,6 +183,13 @@ elif page == "View Work & Tasks":
     else:
         for work in works:
             with st.expander(f"{work.title} (ID: {work.id})", expanded=False):
+                # Status indicator
+                status_color = {
+                    "Draft": "gray",
+                    "Published": "blue",
+                    "Completed": "green"
+                }.get(work.status, "black")
+                st.markdown(f"<b>Status:</b> <span style='color:{status_color}; font-weight:bold'>{work.status}</span>", unsafe_allow_html=True)
                 st.write(f"**Description:** {work.description}")
                 st.write(f"**Created:** {work.created_at}")
                 # Edit Work title/desc
@@ -198,6 +205,23 @@ elif page == "View Work & Tasks":
                     db.commit()
                     st.warning("Work deleted.")
                     st.rerun()
+                # Publish button only for Draft work
+                if work.status == "Draft":
+                    if st.button("Publish", key=f"publish_work_{work.id}"):
+                        from db import publish_work, get_tasks_by_work
+                        from reminder import ReminderAgent
+                        publish_work(db, work.id)
+                        db.commit()
+                        # Create calendar event for first task
+                        tasks = get_tasks_by_work(db, work.id)
+                        if tasks:
+                            agent = ReminderAgent()
+                            event = agent.create_event_for_task(tasks[0], work.title)
+                            agent.send_interactive_work_notification(work)
+                            st.success("Work published, calendar event created, and Slack notified!")
+                        else:
+                            st.success("Work published, but no tasks to schedule.")
+                        st.rerun()
                 # Notify button for Slack integration
                 if st.button("Notify", key=f"notify_work_{work.id}"):
                     import requests
