@@ -27,6 +27,7 @@
 - **Environment Variables**: Managed via `.env` (see `.env.sample`).
 - **Secrets**: OAuth tokens and credentials are expected in the project root (e.g., `token.pickle`, `credentials.json`).
 - **Service Startup**: All-in-one startup via `honcho` (uses `Procfile`).
+- **UI/UX**: Improve project's UI to look modern and beautiful. Please prioritize suggestions that refine typography, enhance visual hierarchy, improve spacing, and involve well-chosen, accessible color schemes. Ensure the UI looks clean, professional, and appealing.
 - **Documentation**: All non-README documentation is in `docs/`.
 
 ## Integration Points
