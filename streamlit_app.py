@@ -342,11 +342,10 @@ elif page == "View Work & Tasks":
                     st.write("No tasks for this work.")
                 else:
                     for task in tasks:
-                        col1, col2, col3, col4 = st.columns([4, 2, 2, 3])
+                        col1, col2, col3, col4 = st.columns([4, 3, 2, 1])
                         with col1:
                             edit_task_title = st.text_input("Task", value=task.title, key=f"task_title_{task.id}", help="Edit the task title.")
                         with col2:
-                            st.markdown("<div style='margin-bottom: -18px'></div>", unsafe_allow_html=True)
                             status_options = ["Published", "Tracked", "Completed"]
                             status_index = status_options.index(task.status) if task.status in status_options else 0
                             edit_task_status = st.selectbox("Status", status_options, index=status_index, key=f"task_status_{task.id}", help="Update the task status.")
@@ -357,17 +356,17 @@ elif page == "View Work & Tasks":
                                 edit_task_due_date = None
                                 st.markdown("<b>Due date:</b> -", unsafe_allow_html=True)
                         with col4:
-                            task_action_col1, task_action_col2 = st.columns([1,1])
-                            with task_action_col1:
-                                if st.button("Save", key=f"save_task_{task.id}", help="Save changes to this task."):
+                            save_col, delete_col = st.columns([1,1])
+                            with save_col:
+                                if st.button("💾", key=f"save_task_{task.id}", help="Save changes to this task."):
                                     task.title = edit_task_title
                                     task.status = edit_task_status
                                     if edit_task_due_date is not None:
                                         task.due_date = edit_task_due_date
                                     db.commit()
                                     st.success("Task updated.")
-                            with task_action_col2:
-                                if st.button("Delete", key=f"delete_task_{task.id}", help="Delete this task."):
+                            with delete_col:
+                                if st.button("🗑️", key=f"delete_task_{task.id}", help="Delete this task."):
                                     db.delete(task)
                                     db.commit()
                                     st.warning("Task deleted.")
