@@ -257,6 +257,14 @@ class ReminderAgent:
         from slack_interactive import send_interactive_work_notification
         send_interactive_work_notification(work, self.slack_webhook_url)
 
+    def send_publish_notification(self, work):
+        """Send a simpler publish Slack notification (non-interactive) when work is published."""
+        try:
+            from slack_interactive import send_publish_work_notification
+            send_publish_work_notification(work, self.slack_webhook_url)
+        except Exception as e:
+            print(f"Failed to send publish notification: {e}")
+
 def main():
     agent = ReminderAgent()
     while True:

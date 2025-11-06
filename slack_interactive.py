@@ -185,6 +185,51 @@ def send_interactive_work_notification(work, slack_webhook_url):
     payload = {"blocks": blocks, "text": "Please confirm or update due dates for these tasks."}
     requests.post(slack_webhook_url, json=payload)
 
+
+def send_publish_work_notification(work, slack_webhook_url):
+    """Send a simpler Slack notification when a work item is published.
+
+    This message contains the work title/description and a short summary of the
+    task that was added to the calendar (if any). It purposely avoids interactive
+    datepickers or confirmation flows.
+    """
+    try:
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Work Published*\n*Title:* {work.title}\n*Description:* {work.description}"}
+            },
+            {"type": "divider"}
+        ]
+
+        # Find a task that was added to the calendar (prefer status 'Tracked' or a calendar_event_id)
+        calendar_task = None
+        for task in getattr(work, 'tasks', []) or []:
+            if getattr(task, 'calendar_event_id', None) or getattr(task, 'status', None) == 'Tracked':
+                calendar_task = task
+                break
+
+        if calendar_task:
+            due = calendar_task.due_date.strftime('%Y-%m-%d') if calendar_task.due_date else 'No due date'
+            text = f"*Calendar Task Added*\n*Task:* {calendar_task.title}\nDue: {due}"
+            if getattr(calendar_task, 'calendar_event_id', None):
+                text += f"\nEvent ID: {calendar_task.calendar_event_id}"
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text}
+            })
+        else:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "No calendar task was added for this work."}
+            })
+
+        payload = {"blocks": blocks, "text": f"Work '{work.title}' published."}
+        requests.post(slack_webhook_url, json=payload)
+        logging.info(f"Sent publish notification for Work ID {getattr(work, 'id', 'unknown')}")
+    except Exception as e:
+        logging.exception(f"Failed to send publish notification for work: {e}")
+
 # --- Threaded Flask server start ---
 def start_flask():
     app.run(host='0.0.0.0', port=5000)

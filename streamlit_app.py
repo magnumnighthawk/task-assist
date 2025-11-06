@@ -306,8 +306,9 @@ elif page == "View Work & Tasks":
                                 else:
                                     t.status = 'Published'
                             db.commit()
-                            agent.send_interactive_work_notification(work)
-                            st.success("Work published, calendar event created, and Slack notified!")
+                            # Send a simpler publish notification (no interactive date confirmation)
+                            agent.send_publish_notification(work)
+                            st.success("Work published, calendar event created, and Slack notified (publish message).")
                         else:
                             st.success("Work published, but no tasks to schedule.")
                         st.rerun()
