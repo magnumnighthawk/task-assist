@@ -3,14 +3,15 @@ import os
 import json
 from datetime import datetime
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain.schema import SystemMessage, HumanMessage
+import openai
 from db import create_work, create_task, get_db
 from sqlalchemy.orm import Session
 
 load_dotenv()
 
-llm = ChatOpenAI()
+# Configure OpenAI API key via environment variable OPENAI_API_KEY
+openai.api_key = os.environ.get('OPENAI_API_KEY')
+
 
 def generate_subtasks(task_description: str, max_subtasks: int = 5):
     now = datetime.now().isoformat()
@@ -37,14 +38,13 @@ def generate_subtasks(task_description: str, max_subtasks: int = 5):
         f"Task: {task_description}\n\nJSON:"
     )
     messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt)
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
     ]
-    response = llm(messages)
-    if hasattr(response, 'content'):
-        response_content = response.content
-    else:
-        response_content = str(response)
+    # Call OpenAI ChatCompletion
+    resp = openai.ChatCompletion.create(model=os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo'), messages=messages, temperature=0.2)
+    # Extract assistant reply
+    response_content = resp['choices'][0]['message']['content']
     try:
         result = json.loads(response_content)
         # Validate structure
@@ -92,14 +92,11 @@ def revise_subtasks(original_subtasks, feedback, max_subtasks=5):
         f"Update the subtasks as needed, output only a valid JSON object as described above, with a maximum of {max_subtasks} subtasks.\nJSON:"
     )
     messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt)
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
     ]
-    response = llm(messages)
-    if hasattr(response, 'content'):
-        response_content = response.content
-    else:
-        response_content = str(response)
+    resp = openai.ChatCompletion.create(model=os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo'), messages=messages, temperature=0.2)
+    response_content = resp['choices'][0]['message']['content']
     try:
         result = json.loads(response_content)
         if not all(k in result for k in ("work_name", "work_description", "subtasks")):
