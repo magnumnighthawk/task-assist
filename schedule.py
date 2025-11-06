@@ -62,6 +62,12 @@ if __name__ == "__main__":
     scheduler.add_job(overnight_batch, 'cron', hour=2, minute=0)
     # Schedule daily Slack reminder at 6am
     scheduler.add_job(daily_reminder, 'cron', hour=6, minute=0)
+    # Schedule watch renewal every 30 minutes
+    from reminder import ReminderAgent
+    def renew_watches_job():
+        agent = ReminderAgent()
+        agent.renew_all_watches()
+    scheduler.add_job(renew_watches_job, 'interval', minutes=30)
     scheduler.start()
     print("Scheduler started. Overnight batch at 2am, daily reminder at 6am.")
     try:

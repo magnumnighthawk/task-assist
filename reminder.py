@@ -163,6 +163,32 @@ class ReminderAgent:
             task.status = 'Completed'
         db.commit()
         db.close()
+
+    def process_event_by_id(self, event_id):
+        """Fetch an event from Google Calendar by event_id and sync it to the DB.
+
+        This helper is useful for webhook handlers that receive an event_id and want
+        the application to reconcile changes.
+        """
+        try:
+            event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
+            # Normalize event updates to the shape expected by sync_event_update_to_db
+            updates = {}
+            if 'start' in event:
+                updates['start'] = event['start']
+            if 'end' in event:
+                updates['end'] = event['end']
+            if 'summary' in event:
+                updates['summary'] = event['summary']
+            if 'description' in event:
+                updates['description'] = event['description']
+            # Status could be in event.get('status') depending on the API
+            if 'status' in event:
+                updates['status'] = event['status']
+            # Hand off to existing sync logic
+            self.sync_event_update_to_db(event_id, updates)
+        except Exception as e:
+            print(f"Failed to process event {event_id}: {e}")
     def fetch_latest_work(self):
         """Fetch the latest Work item from the database, eagerly loading tasks."""
         from db import get_db, Work
@@ -175,6 +201,80 @@ class ReminderAgent:
     def __init__(self):
         self.service = get_calendar_service()
         self.slack_webhook_url = os.getenv('SLACK_WEBHOOK_URL')
+
+    # --- Watch management (in-app) ---
+    def create_calendar_watch(self, channel_id: str, address: str, ttl_seconds: int = 3600):
+        """Create a calendar watch channel for the primary calendar events collection.
+
+        Stores the channel info in DB so the app can manage renewals and stop channels later.
+        """
+        body = {
+            'id': channel_id,
+            'type': 'web_hook',
+            'address': address,
+            'params': {'ttl': str(ttl_seconds)}
+        }
+        resp = self.service.events().watch(calendarId='primary', body=body).execute()
+        # resp contains 'id', 'resourceId', 'expiration' (ms since epoch)
+        resource_id = resp.get('resourceId')
+        expiration_ms = resp.get('expiration')
+        expiration = None
+        if expiration_ms:
+            expiration = datetime.datetime.fromtimestamp(int(expiration_ms) / 1000.0)
+        # Save to DB
+        from db import get_db, create_watch_channel
+        db_gen = get_db()
+        db = next(db_gen)
+        try:
+            wc = create_watch_channel(db, channel_id=resp.get('id', channel_id), resource_id=resource_id, address=address, expiration=expiration)
+        finally:
+            db.close()
+        return resp
+
+    def stop_calendar_watch(self, channel_id: str, resource_id: str = None):
+        """Stop a watch channel and remove it from DB."""
+        body = {'id': channel_id}
+        if resource_id:
+            body['resourceId'] = resource_id
+        try:
+            self.service.channels().stop(body=body).execute()
+        except Exception as e:
+            print(f"Failed to stop watch channel {channel_id}: {e}")
+        # Remove from DB
+        from db import get_db, delete_watch_channel
+        db_gen = get_db()
+        db = next(db_gen)
+        try:
+            delete_watch_channel(db, channel_id)
+        finally:
+            db.close()
+
+    def renew_all_watches(self):
+        """Renew watch channels found in DB by creating new watch channels before expiration.
+
+        This is a simple approach: for channels expiring within next N minutes, recreate the watch and update DB.
+        """
+        from db import get_db, get_all_watch_channels, update_watch_channel_expiration
+        db_gen = get_db()
+        db = next(db_gen)
+        try:
+            channels = get_all_watch_channels(db)
+            now = datetime.datetime.utcnow()
+            for ch in channels:
+                if not ch.expiration or (ch.expiration - now).total_seconds() < 300:
+                    # Needs renewal (create a new channel with a new channel_id)
+                    new_channel_id = f"channel-{int(datetime.datetime.utcnow().timestamp())}-{ch.id}"
+                    try:
+                        resp = self.create_calendar_watch(new_channel_id, ch.address)
+                        expiration_ms = resp.get('expiration')
+                        expiration = None
+                        if expiration_ms:
+                            expiration = datetime.datetime.fromtimestamp(int(expiration_ms) / 1000.0)
+                        update_watch_channel_expiration(db, resp.get('id', new_channel_id), expiration)
+                    except Exception as e:
+                        print(f"Failed to renew watch for {ch.id}: {e}")
+        finally:
+            db.close()
     
     def create_event(self, summary, start_time, end_time, description=None):
         """Create a new calendar event."""

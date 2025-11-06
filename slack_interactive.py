@@ -230,6 +230,36 @@ def send_publish_work_notification(work, slack_webhook_url):
     except Exception as e:
         logging.exception(f"Failed to send publish notification for work: {e}")
 
+
+@app.route('/api/calendar/push', methods=['POST'])
+def calendar_push():
+    """Endpoint to receive Google Calendar push notifications.
+
+    Google Calendar push notifications can be configured to POST to this URL.
+    The exact payload varies; we accept a simple JSON payload with `event_id`.
+    If a `resourceId` or other identifier is supplied, you can extend this handler
+    to resolve it to an event ID. For now, we call ReminderAgent.process_event_by_id
+    when `event_id` is present.
+    """
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        data = None
+    logging.info(f"Received calendar push payload: {data}")
+    if not data:
+        return jsonify({"status": "error", "message": "No JSON payload received."}), 400
+    event_id = data.get('event_id') or data.get('resourceId')
+    if not event_id:
+        return jsonify({"status": "error", "message": "No event_id or resourceId found in payload."}), 400
+    try:
+        from reminder import ReminderAgent
+        agent = ReminderAgent()
+        agent.process_event_by_id(event_id)
+        return jsonify({"status": "success", "message": f"Processed event {event_id}"}), 200
+    except Exception as e:
+        logging.exception("Failed to process calendar push:")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 # --- Threaded Flask server start ---
 def start_flask():
     app.run(host='0.0.0.0', port=5000)

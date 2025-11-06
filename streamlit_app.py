@@ -365,9 +365,41 @@ elif page == "View Work & Tasks":
                                     if edit_task_due_date is not None:
                                         task.due_date = edit_task_due_date
                                     db.commit()
-                                    st.success("Task updated.")
+                                    # Sync changes to Google Calendar
+                                    try:
+                                        agent = ReminderAgent()
+                                        # If task has a calendar event, update it
+                                        if task.calendar_event_id:
+                                            # Build updated event data
+                                            updated_data = {
+                                                'summary': f"{work.title}: {task.title}",
+                                                'description': getattr(task, 'description', None),
+                                            }
+                                            if task.due_date:
+                                                updated_data['start'] = {'dateTime': task.due_date.isoformat(), 'timeZone': 'Europe/London'}
+                                                updated_data['end'] = {'dateTime': (task.due_date + datetime.timedelta(hours=1)).isoformat(), 'timeZone': 'Europe/London'}
+                                            # Remove None entries
+                                            updated_data = {k: v for k, v in updated_data.items() if v is not None}
+                                            agent.update_event(task.calendar_event_id, updated_data)
+                                        else:
+                                            # If status indicates it should be tracked, create an event
+                                            if task.status == 'Tracked' or (task.due_date and task.status == 'Published'):
+                                                ev = agent.create_event_for_task(task, work.title)
+                                                # update the task calendar_event_id in DB
+                                                from db import update_task_calendar_event
+                                                update_task_calendar_event(db, task.id, ev.get('id'))
+                                        st.success("Task updated and calendar synced.")
+                                    except Exception as e:
+                                        st.warning(f"Task saved, but failed to sync calendar: {e}")
                             with delete_col:
                                 if st.button("🗑️", key=f"delete_task_{task.id}", help="Delete this task."):
+                                    # If task has a calendar event, delete it first
+                                    try:
+                                        if task.calendar_event_id:
+                                            agent = ReminderAgent()
+                                            agent.delete_event(task.calendar_event_id)
+                                    except Exception as e:
+                                        st.warning(f"Failed to delete calendar event: {e}")
                                     db.delete(task)
                                     db.commit()
                                     st.warning("Task deleted.")

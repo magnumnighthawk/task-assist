@@ -34,6 +34,16 @@ class Task(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     work = relationship('Work', back_populates='tasks')
 
+
+class WatchChannel(Base):
+    __tablename__ = 'watch_channel'
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(String, nullable=False, unique=True)
+    resource_id = Column(String, nullable=True)
+    address = Column(String, nullable=False)
+    expiration = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
@@ -107,3 +117,31 @@ def get_all_works(db):
 
 def get_all_tasks(db):
     return db.query(Task).all()
+
+
+def create_watch_channel(db, channel_id, resource_id, address, expiration=None):
+    wc = WatchChannel(channel_id=channel_id, resource_id=resource_id, address=address, expiration=expiration)
+    db.add(wc)
+    db.commit()
+    db.refresh(wc)
+    return wc
+
+
+def get_all_watch_channels(db):
+    return db.query(WatchChannel).all()
+
+
+def update_watch_channel_expiration(db, channel_id, expiration):
+    wc = db.query(WatchChannel).filter(WatchChannel.channel_id == channel_id).first()
+    if wc:
+        wc.expiration = expiration
+        db.commit()
+    return wc
+
+
+def delete_watch_channel(db, channel_id):
+    wc = db.query(WatchChannel).filter(WatchChannel.channel_id == channel_id).first()
+    if wc:
+        db.delete(wc)
+        db.commit()
+    return wc
