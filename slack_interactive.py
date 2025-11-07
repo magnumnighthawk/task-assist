@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 
 # Define the scopes and timezone.
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+SCOPES = ['https://www.googleapis.com/auth/tasks']
 TIMEZONE = 'Europe/London'
 load_dotenv()
 
@@ -233,13 +233,13 @@ def send_publish_work_notification(work, slack_webhook_url):
 
 @app.route('/api/calendar/push', methods=['POST'])
 def calendar_push():
-    """Endpoint to receive Google Calendar push notifications.
+    """Endpoint to receive push notifications.
 
-    Google Calendar push notifications can be configured to POST to this URL.
-    The exact payload varies; we accept a simple JSON payload with `event_id`.
-    If a `resourceId` or other identifier is supplied, you can extend this handler
-    to resolve it to an event ID. For now, we call ReminderAgent.process_event_by_id
-    when `event_id` is present.
+    Note: Google Tasks API does not provide the same push/watch mechanism as Calendar.
+    This endpoint historically handled Calendar push notifications. It remains as a
+    compatibility surface and will attempt to call ReminderAgent.process_event_by_id
+    when `event_id` is present, but in practice you will need to adapt your webhook
+    source if you intend to use Tasks push behavior.
     """
     try:
         data = request.get_json(force=True)

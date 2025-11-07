@@ -26,19 +26,26 @@ def overnight_batch():
     tasks = get_all_tasks(db)
     for task in tasks:
         if task.calendar_event_id:
-            event = agent.service.events().get(calendarId='primary', eventId=task.calendar_event_id).execute()
+            # calendar_event_id now stores the Google Tasks task id
+            try:
+                remote = agent.service.tasks().get(tasklist='@default', task=task.calendar_event_id).execute()
+            except Exception:
+                remote = None
             changes = []
-            if event.get('status') == 'completed' or event.get('status') == 'cancelled':
+            if remote and remote.get('status') == 'completed':
                 agent.complete_task_and_schedule_next(task, task.work)
                 agent.notify_task_completed(task, task.work)
                 changes.append(f"Task '{task.title}' completed.")
-            elif 'start' in event and 'dateTime' in event['start']:
-                event_due = datetime.fromisoformat(event['start']['dateTime'])
-                if task.due_date and event_due > task.due_date:
-                    agent.snooze_task(task, task.work, days=(event_due - task.due_date).days)
-                    if task.snooze_count >= 3:
-                        agent.notify_snooze_followup(task, task.work)
-                    changes.append(f"Task '{task.title}' snoozed to {event_due.date()}.")
+            elif remote and 'due' in remote:
+                try:
+                    event_due = datetime.datetime.fromisoformat(remote['due'].replace('Z', '+00:00'))
+                    if task.due_date and event_due > task.due_date:
+                        agent.snooze_task(task, task.work, days=(event_due - task.due_date).days)
+                        if task.snooze_count >= 3:
+                            agent.notify_snooze_followup(task, task.work)
+                        changes.append(f"Task '{task.title}' snoozed to {event_due.date()}.")
+                except Exception:
+                    pass
             if changes:
                 agent.notify_grouped_alert(task.work, changes)
     # 2. Broadcast clean-up or changes from DB to calendar

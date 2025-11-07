@@ -191,21 +191,23 @@ if page == "Task Generator":
                 if schedule_key not in st.session_state:
                     st.session_state[schedule_key] = False
                 if st.session_state[schedule_key]:
-                    with st.spinner("Scheduling event..."):
+                    with st.spinner("Scheduling task..."):
                         pass
-                if st.button("Add to Calendar", key=f"schedule_{i}_{subtask['uid']}", help="Schedule this subtask as a Google Calendar event."):
+                if st.button("Add to Google Tasks", key=f"schedule_{i}_{subtask['uid']}", help="Add this subtask to Google Tasks."):
                     st.session_state[schedule_key] = True
-                    with st.spinner("Scheduling event..."):
+                    with st.spinner("Scheduling task..."):
                         agent = ReminderAgent()
                         summary = subtask['description']
                         start_time = datetime.datetime.combine(due_date, datetime.time(8, 0)).isoformat()
                         end_time = (datetime.datetime.combine(due_date, datetime.time(8, 0)) + datetime.timedelta(hours=1)).isoformat()
                         try:
-                            event = agent.create_event(summary, start_time, end_time, description=f"Auto-scheduled by Task Assist. Priority: {subtask['priority']}")
-                            st.success(f"Calendar event created for subtask: {summary}")
-                            st.write(f"Event link: {event.get('htmlLink')}")
+                            task = agent.create_event(summary, start_time, end_time, description=f"Auto-scheduled by Task Assist. Priority: {subtask['priority']}")
+                            st.success(f"Google Task created for subtask: {summary}")
+                            # Tasks API doesn't provide a human-facing htmlLink; show selfLink or id
+                            link = task.get('selfLink') or task.get('id')
+                            st.write(f"Task reference: {link}")
                         except Exception as e:
-                            st.error(f"Failed to create calendar event: {e}")
+                            st.error(f"Failed to create Google Task: {e}")
                     st.session_state[schedule_key] = False
                     st.rerun()
 

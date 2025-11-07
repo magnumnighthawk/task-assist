@@ -11,41 +11,64 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 # Keep scopes/timezone simple. Assume credentials and service will work.
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+SCOPES = ['https://www.googleapis.com/auth/tasks']
 TIMEZONE = 'Europe/London'
 load_dotenv()
 
 
 def get_calendar_service():
-    """Return a Google Calendar API service instance.
+    """Return a Google Tasks API service instance (keeps function name for compatibility).
 
-    This version removes safety gates and assumes credentials/service are available.
+    The project previously used Calendar events; this changes to Tasks API v1.
     """
     creds = None
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as token:
             creds = pickle.load(token)
 
-    # Build service (credentials may be None; assume environment provides access)
-    service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
+    # Build service for Google Tasks
+    service = build('tasks', 'v1', credentials=creds, cache_discovery=False)
     return service
 
 
 def get_calendar_credentials():
     """Load and return Google credentials from token.pickle if present."""
     creds = None
+    # Try to load existing token.pickle
     if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
-    # Try a silent refresh if possible
+        try:
+            with open('token.pickle', 'rb') as token:
+                creds = pickle.load(token)
+        except Exception:
+            creds = None
+
+    # If we have credentials and they're expired, try to refresh using the refresh token
     try:
         if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
             creds.refresh(Request())
             with open('token.pickle', 'wb') as token:
                 pickle.dump(creds, token)
+            return creds
     except Exception:
-        pass
-    return creds
+        # Fall through to re-run the flow
+        creds = None
+
+    # If no valid creds, attempt interactive OAuth flow using credentials.json
+    creds_file = 'credentials.json'
+    if os.path.exists(creds_file):
+        try:
+            flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
+            # run_local_server will open a browser for the user to consent and perform redirect
+            creds = flow.run_local_server(port=0, access_type='offline', prompt='consent')
+            # Save the credentials for the next run
+            with open('token.pickle', 'wb') as token:
+                pickle.dump(creds, token)
+            return creds
+        except Exception:
+            # If interactive flow fails (headless), just return None
+            return None
+    # No token and no credentials.json
+    return None
 
 
 def _check_google_connectivity(*args, **kwargs):
@@ -54,10 +77,10 @@ def _check_google_connectivity(*args, **kwargs):
 
 class ReminderAgent:
     def notify_event_created(self, task, work):
-        self.send_slack_notification(f"Calendar event created for Task '{task.title}' in Work '{work.title}'.")
+        self.send_slack_notification(f"Google Task created for Task '{task.title}' in Work '{work.title}'.")
 
     def notify_event_updated(self, task, work):
-        self.send_slack_notification(f"Calendar event updated for Task '{task.title}' in Work '{work.title}'.")
+        self.send_slack_notification(f"Google Task updated for Task '{task.title}' in Work '{work.title}'.")
 
     def notify_task_completed(self, task, work):
         self.send_slack_notification(f"Task '{task.title}' in Work '{work.title}' marked as completed!")
@@ -216,45 +239,20 @@ class ReminderAgent:
     def __init__(self):
         # Initialize credentials/service without extra guards
         self.creds = get_calendar_credentials()
-        self.service = build('calendar', 'v3', credentials=self.creds, cache_discovery=False)
+        # Use Tasks API (v1)
+        self.service = build('tasks', 'v1', credentials=self.creds, cache_discovery=False)
         self.slack_webhook_url = os.getenv('SLACK_WEBHOOK_URL')
 
     # --- Watch management (in-app) ---
     def create_calendar_watch(self, channel_id: str, address: str, ttl_seconds: int = 3600):
-        """Create a calendar watch channel for the primary calendar events collection.
+        """Tasks API does not support push/watch channels like Calendar.
 
-        Stores the channel info in DB so the app can manage renewals and stop channels later.
+        This method is retained for compatibility but will raise NotImplementedError.
         """
-        body = {
-            'id': channel_id,
-            'type': 'web_hook',
-            'address': address,
-            'params': {'ttl': str(ttl_seconds)}
-        }
-        resp = self.service.events().watch(calendarId='primary', body=body).execute()
-        # resp contains 'id', 'resourceId', 'expiration' (ms since epoch)
-        resource_id = resp.get('resourceId')
-        expiration_ms = resp.get('expiration')
-        expiration = None
-        if expiration_ms:
-            expiration = datetime.datetime.fromtimestamp(int(expiration_ms) / 1000.0)
-        # Save to DB
-        from db import get_db, create_watch_channel
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
-            wc = create_watch_channel(db, channel_id=resp.get('id', channel_id), resource_id=resource_id, address=address, expiration=expiration)
-        finally:
-            db.close()
-        return resp
+        raise NotImplementedError('Google Tasks API does not support watch channels; remove usage or implement polling instead')
 
     def stop_calendar_watch(self, channel_id: str, resource_id: str = None):
-        """Stop a watch channel and remove it from DB."""
-        body = {'id': channel_id}
-        if resource_id:
-            body['resourceId'] = resource_id
-        self.service.channels().stop(body=body).execute()
-        # Remove from DB
+        """Stop a watch channel - not supported for Tasks API. Will remove DB record if present."""
         from db import get_db, delete_watch_channel
         db_gen = get_db()
         db = next(db_gen)
@@ -275,103 +273,116 @@ class ReminderAgent:
             channels = get_all_watch_channels(db)
             now = datetime.datetime.utcnow()
             for ch in channels:
+                # Tasks API doesn't support watches; clear or mark expired watches so DB doesn't pile up
                 if not ch.expiration or (ch.expiration - now).total_seconds() < 300:
-                    # Needs renewal (create a new channel with a new channel_id)
-                    new_channel_id = f"channel-{int(datetime.datetime.utcnow().timestamp())}-{ch.id}"
-                    resp = self.create_calendar_watch(new_channel_id, ch.address)
-                    expiration_ms = resp.get('expiration')
-                    expiration = None
-                    if expiration_ms:
-                        expiration = datetime.datetime.fromtimestamp(int(expiration_ms) / 1000.0)
-                    update_watch_channel_expiration(db, resp.get('id', new_channel_id), expiration)
+                    update_watch_channel_expiration(db, ch.channel_id, None)
         finally:
             db.close()
     
     def create_event(self, summary, start_time, end_time, description=None):
-        """Create a new calendar event."""
-        event = {
-            'summary': summary,
-            'description': description,
-            'start': {
-                'dateTime': start_time,  # Format: 'YYYY-MM-DDTHH:MM:SS+00:00'
-                'timeZone': TIMEZONE,
-            },
-            'end': {
-                'dateTime': end_time,
-                'timeZone': TIMEZONE,
-            }
+        """Create a new Google Task (keeps name create_event for compatibility).
+
+        start_time/end_time are legacy params (from calendar); Tasks only supports a single due time.
+        We use start_time as the Task 'due' timestamp if provided.
+        Returns the created task resource.
+        """
+        task_body = {
+            'title': summary,
+            'notes': description,
         }
-        logger = logging.getLogger('reminder.create_event')
+        # Prefer start_time as due if present
+        if start_time:
+            # Ensure RFC3339 format. If naive ISO string provided, append 'Z' if missing timezone.
+            due = start_time
+            if due.endswith('Z') is False and ('+' not in due and '-' not in due[10:]):
+                due = due + 'Z'
+            task_body['due'] = due
+
+        logger = logging.getLogger('reminder.create_task')
         max_retries = 3
         backoff = 2
         last_exception = None
         for attempt in range(1, max_retries + 1):
             try:
-                # Prefer using the googleapiclient service if available
                 if self.service:
-                    created_event = self.service.events().insert(calendarId='primary', body=event).execute()
-                    logger.info('Event created: %s', created_event.get('htmlLink'))
-                    return created_event
-                # If service is not available but we have creds, try a direct REST call using requests
+                    created_task = self.service.tasks().insert(tasklist='@default', body=task_body).execute()
+                    logger.info('Task created: %s', created_task.get('selfLink'))
+                    return created_task
                 if self.creds:
-                    created_event = self._create_event_via_requests(event)
-                    logger.info('Event created via requests fallback: %s', created_event.get('htmlLink'))
-                    return created_event
-                raise RuntimeError('No calendar service or credentials available to create event')
+                    created_task = self._create_event_via_requests(task_body)
+                    logger.info('Task created via requests fallback: %s', created_task.get('selfLink'))
+                    return created_task
+                raise RuntimeError('No tasks service or credentials available to create task')
             except socket.timeout as e:
                 last_exception = e
-                logger.warning('Timeout when creating calendar event (attempt %s/%s): %s', attempt, max_retries, e)
+                logger.warning('Timeout when creating task (attempt %s/%s): %s', attempt, max_retries, e)
             except Exception as e:
-                # Some other network or API error - log and retry for transient cases
                 last_exception = e
-                logger.exception('Error when creating calendar event (attempt %s/%s): %s', attempt, max_retries, e)
+                logger.exception('Error when creating task (attempt %s/%s): %s', attempt, max_retries, e)
             if attempt < max_retries:
                 sleep_time = backoff * attempt
-                logger.info('Retrying create_event in %s seconds...', sleep_time)
+                logger.info('Retrying create_task in %s seconds...', sleep_time)
                 time.sleep(sleep_time)
-        # If we reach here, all retries failed
-        logger.error('Failed to create calendar event after %s attempts', max_retries)
+        logger.error('Failed to create task after %s attempts', max_retries)
         raise last_exception
     
     def update_event(self, event_id, updated_data):
-        """Update an existing event with new data."""
-        logger = logging.getLogger('reminder.update_event')
+        """Update an existing Google Task. `updated_data` should map to Task fields (title, notes, due, status).
+
+        Keeps name update_event for compatibility.
+        """
+        logger = logging.getLogger('reminder.update_task')
         max_retries = 3
         backoff = 2
         last_exception = None
         for attempt in range(1, max_retries + 1):
             try:
-                event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
-                event.update(updated_data)
-                updated_event = self.service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
-                logger.info('Event updated: %s', updated_event.get('htmlLink'))
-                return updated_event
+                task = self.service.tasks().get(tasklist='@default', task=event_id).execute()
+                # Map calendar-like structure to tasks fields if necessary
+                if 'summary' in updated_data:
+                    task['title'] = updated_data['summary']
+                if 'description' in updated_data:
+                    task['notes'] = updated_data['description']
+                if 'start' in updated_data and isinstance(updated_data['start'], dict) and 'dateTime' in updated_data['start']:
+                    task['due'] = updated_data['start']['dateTime']
+                if 'status' in updated_data:
+                    # Map 'completed' to tasks status
+                    if updated_data['status'] == 'completed':
+                        task['status'] = 'completed'
+                    else:
+                        task['status'] = updated_data['status']
+                updated_task = self.service.tasks().update(tasklist='@default', task=event_id, body=task).execute()
+                logger.info('Task updated: %s', updated_task.get('selfLink'))
+                return updated_task
             except socket.timeout as e:
                 last_exception = e
-                logger.warning('Timeout when updating calendar event (attempt %s/%s): %s', attempt, max_retries, e)
+                logger.warning('Timeout when updating task (attempt %s/%s): %s', attempt, max_retries, e)
             except Exception as e:
                 last_exception = e
-                logger.exception('Error when updating calendar event (attempt %s/%s): %s', attempt, max_retries, e)
+                logger.exception('Error when updating task (attempt %s/%s): %s', attempt, max_retries, e)
             if attempt < max_retries:
                 sleep_time = backoff * attempt
-                logger.info('Retrying update_event in %s seconds...', sleep_time)
+                logger.info('Retrying update_task in %s seconds...', sleep_time)
                 time.sleep(sleep_time)
-        logger.error('Failed to update calendar event after %s attempts', max_retries)
+        logger.error('Failed to update task after %s attempts', max_retries)
         raise last_exception
     
     def delete_event(self, event_id):
-        """Delete an event from the calendar."""
-        self.service.events().delete(calendarId='primary', eventId=event_id).execute()
-        print('Event deleted successfully.')
+        """Delete a Google Task by id (keeps name delete_event)."""
+        try:
+            self.service.tasks().delete(tasklist='@default', task=event_id).execute()
+            print('Task deleted successfully.')
+        except Exception as e:
+            print(f'Failed to delete task: {e}')
 
     def _create_event_via_requests(self, event_body):
-        """Fallback: create an event using the Calendar REST API via requests.
+        """Fallback: create a Task using the Tasks REST API via requests.
 
-        This avoids using httplib2 and relies on the credentials' valid access token.
+        Accepts a task-like dict and returns the created Task resource.
         """
-        logger = logging.getLogger('reminder.create_event_requests')
+        logger = logging.getLogger('reminder.create_task_requests')
         if not self.creds:
-            raise RuntimeError('No credentials available for requests-based event create')
+            raise RuntimeError('No credentials available for requests-based task create')
         # Ensure the token is fresh
         if getattr(self.creds, 'expired', False) and getattr(self.creds, 'refresh_token', None):
             try:
@@ -381,7 +392,6 @@ class ReminderAgent:
             except Exception as e:
                 logger.warning('Failed to refresh creds before requests call: %s', e)
 
-        # Build request
         access_token = getattr(self.creds, 'token', None)
         if not access_token:
             raise RuntimeError('No access token available on credentials')
@@ -390,43 +400,47 @@ class ReminderAgent:
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json'
         }
-        url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+        url = 'https://www.googleapis.com/tasks/v1/lists/@default/tasks'
         resp = requests.post(url, json=event_body, headers=headers, timeout=30)
         if resp.status_code not in (200, 201):
-            logger.error('Requests-based event create failed: %s - %s', resp.status_code, resp.text)
+            logger.error('Requests-based task create failed: %s - %s', resp.status_code, resp.text)
             resp.raise_for_status()
         return resp.json()
     
     def reschedule_event(self, event_id, new_start_time, new_end_time):
-        """Reschedule an event by updating its start and end times."""
-        updated_data = {
-            'start': {
-                'dateTime': new_start_time,
-                'timeZone': TIMEZONE,
-            },
-            'end': {
-                'dateTime': new_end_time,
-                'timeZone': TIMEZONE,
-            }
-        }
+        """Reschedule a Task by updating its due timestamp.
+
+        new_start_time is used as the Task 'due' value. end time is ignored (Tasks have a single due).
+        """
+        updated_data = {}
+        if new_start_time:
+            updated_data['start'] = {'dateTime': new_start_time}
         return self.update_event(event_id, updated_data)
     
     def list_upcoming_events(self, max_results=10):
-        """List upcoming events from the calendar."""
-        now = datetime.datetime.utcnow().isoformat() + 'Z'
-        events_result = self.service.events().list(
-            calendarId='primary', timeMin=now,
-            maxResults=max_results, singleEvents=True,
-            orderBy='startTime').execute()
-        events = events_result.get('items', [])
-        if not events:
-            print('No upcoming events found.')
+        """List upcoming Tasks from the default tasklist and return those with due dates in the future.
+
+        Note: Tasks API doesn't support time-based querying; we fetch recent tasks and filter by due.
+        """
+        tasks_result = self.service.tasks().list(tasklist='@default', maxResults=100, showCompleted=False).execute()
+        items = tasks_result.get('items', [])
+        now = datetime.datetime.utcnow()
+        upcoming = []
+        for t in items:
+            if 'due' in t:
+                try:
+                    due_dt = datetime.datetime.fromisoformat(t['due'].replace('Z', '+00:00'))
+                    if due_dt >= now:
+                        upcoming.append(t)
+                except Exception:
+                    continue
+        if not upcoming:
+            print('No upcoming tasks found.')
         else:
-            print("Upcoming events:")
-            for event in events:
-                start = event['start'].get('dateTime', event['start'].get('date'))
-                print(f"ID: {event['id']}, Start: {start}, Summary: {event['summary']}")
-        return events
+            print('Upcoming tasks:')
+            for t in upcoming[:max_results]:
+                print(f"ID: {t.get('id')}, Due: {t.get('due')}, Title: {t.get('title')}")
+        return upcoming[:max_results]
     
     def send_slack_notification(self, message):
         """Send a Slack notification using an incoming webhook."""
