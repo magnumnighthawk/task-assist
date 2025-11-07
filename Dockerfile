@@ -2,7 +2,7 @@
 FROM python:3.11-slim
 
 # Install nginx, supervisor, and redis-server
-RUN apt-get update && apt-get install -y nginx supervisor redis-server && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y nginx redis-server && rm -rf /var/lib/apt/lists/*
 
 # Set work directory
 WORKDIR /app
@@ -13,9 +13,11 @@ COPY . .
 # Install Python dependencies
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
+# Install supervisor via pip to ensure a python entrypoint (avoids platform exec-format issues)
+RUN pip install supervisor
 
 # Expose only the nginx port
 EXPOSE 8000
 
 # Start all services with supervisor
-CMD ["supervisord", "-c", "/app/supervisord.conf"]
+CMD ["python", "-m", "supervisor.supervisord", "-c", "/app/supervisord.conf"]
