@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 
 # --- Custom CSS for modern look ---
-st.set_page_config(page_title="Task Assist AI", page_icon="favicon.png")
+st.set_page_config(page_title="Task Assist AI", page_icon="favicon.png", layout="wide")
 st.markdown(
     """
     <style>
@@ -231,7 +231,9 @@ if page == "Task Generator":
                     st.rerun()
 
         # --- Submit to DB ---
-    if st.button("Submit", help="Save this work and its subtasks to the database."):
+    # Only show Submit when there are generated subtasks to save
+    if 'subtasks' in st.session_state and st.session_state.subtasks:
+        if st.button("Submit", help="Save this work and its subtasks to the database."):
             db_gen = get_db()
             db: Session = next(db_gen)
             work_title = st.session_state.get('llm_work_name', task_description) or "Untitled Work"
