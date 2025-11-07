@@ -3,14 +3,13 @@ import os
 import json
 from datetime import datetime
 from dotenv import load_dotenv
-import openai
+from openai import OpenAI
 from db import create_work, create_task, get_db
 from sqlalchemy.orm import Session
 
 load_dotenv()
 
-# Configure OpenAI API key via environment variable OPENAI_API_KEY
-openai.api_key = os.environ.get('OPENAI_API_KEY')
+client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
 
 def generate_subtasks(task_description: str, max_subtasks: int = 5):
@@ -41,10 +40,13 @@ def generate_subtasks(task_description: str, max_subtasks: int = 5):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
-    # Call OpenAI ChatCompletion
-    resp = openai.ChatCompletion.create(model=os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo'), messages=messages, temperature=0.2)
+    # Call OpenAI ChatCompletion using the new OpenAI client
+    resp = client.chat.completions.create(model=os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo'), messages=messages, temperature=0.2)
     # Extract assistant reply
-    response_content = resp['choices'][0]['message']['content']
+    try:
+        response_content = resp.choices[0].message.content
+    except Exception:
+        response_content = str(resp)
     try:
         result = json.loads(response_content)
         # Validate structure
@@ -95,8 +97,11 @@ def revise_subtasks(original_subtasks, feedback, max_subtasks=5):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
-    resp = openai.ChatCompletion.create(model=os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo'), messages=messages, temperature=0.2)
-    response_content = resp['choices'][0]['message']['content']
+    resp = client.chat.completions.create(model=os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo'), messages=messages, temperature=0.2)
+    try:
+        response_content = resp.choices[0].message.content
+    except Exception:
+        response_content = str(resp)
     try:
         result = json.loads(response_content)
         if not all(k in result for k in ("work_name", "work_description", "subtasks")):

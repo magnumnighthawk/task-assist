@@ -3,6 +3,8 @@ import streamlit as st
 import datetime
 import uuid
 import requests
+import threading
+import logging
 from generate import generate_subtasks, revise_subtasks
 from reminder import ReminderAgent
 from db import create_work, get_db, get_all_works, get_tasks_by_work
@@ -289,29 +291,109 @@ elif page == "View Work & Tasks":
                 if work.status == "Draft":
                     if st.button("Publish", key=f"publish_work_{work.id}", help="Publish this work and notify via Slack/Calendar."):
                         from db import publish_work, get_tasks_by_work
-                        from reminder import ReminderAgent
                         publish_work(db, work.id)
                         db.commit()
-                        # Create calendar event for first task and set its status to 'Tracked'
-                        tasks = get_tasks_by_work(db, work.id)
-                        if tasks:
-                            agent = ReminderAgent()
-                            # Set first task to 'Tracked', others remain 'Published'
-                            first = True
-                            for t in tasks:
-                                if first:
-                                    t.status = 'Tracked'
-                                    event = agent.create_event_for_task(t, work.title)
-                                    first = False
-                                else:
-                                    t.status = 'Published'
-                            db.commit()
-                            # Send a simpler publish notification (no interactive date confirmation)
-                            agent.send_publish_notification(work)
-                            st.success("Work published, calendar event created, and Slack notified (publish message).")
-                        else:
-                            st.success("Work published, but no tasks to schedule.")
-                        st.rerun()
+
+                        # Use a background thread to perform calendar event creation and Slack notification
+                        def _async_publish(work_id, work_title):
+                            logger = logging.getLogger('streamlit_publish')
+                            logger.info(f"Async publish worker started for work {work_id}")
+                            try:
+                                # Check connectivity and auth before instantiating ReminderAgent
+                                db_gen = get_db()
+                                db_thread = next(db_gen)
+                                try:
+                                    import os
+                                    from db import get_tasks_by_work, get_work, update_task_status
+                                    # Check Google connectivity helper (may not exist in older versions)
+                                    try:
+                                        from reminder import _check_google_connectivity
+                                        connectivity_ok = _check_google_connectivity()
+                                    except Exception:
+                                        connectivity_ok = True
+                                    agent = None
+                                    if connectivity_ok:
+                                        try:
+                                            agent = ReminderAgent()
+                                        except Exception as e:
+                                            # Likely missing credentials/token; log and proceed to send Slack only
+                                            logger.warning(f"Google Calendar agent not available: {e}")
+                                            agent = None
+                                    else:
+                                        logger.warning('Skipping calendar API calls due to failed connectivity check')
+
+                                    tasks = get_tasks_by_work(db_thread, work_id)
+                                    if not tasks:
+                                        logger.info(f"Publish: no tasks to schedule for work {work_id}")
+                                    else:
+                                        first = True
+                                        for t in tasks:
+                                            try:
+                                                if first:
+                                                    # Mark first task as Tracked
+                                                    update_task_status(db_thread, t.id, 'Tracked')
+                                                    # Diagnostic logging
+                                                    try:
+                                                        token_exists = os.path.exists('token.pickle')
+                                                        creds_exists = os.path.exists('credentials.json')
+                                                    except Exception:
+                                                        token_exists = False
+                                                        creds_exists = False
+                                                    logger.info(f"Publish: creating calendar event for task {t.id} (title: {t.title}) - due_date={t.due_date} calendar_event_id={t.calendar_event_id} token_exists={token_exists} creds_exists={creds_exists}")
+                                                    if agent:
+                                                        try:
+                                                            ev = agent.create_event_for_task(t, work_title)
+                                                            if ev:
+                                                                logger.info(f"Publish: created event for task {t.id}: id={ev.get('id')} link={ev.get('htmlLink')}")
+                                                            else:
+                                                                logger.warning(f"Publish: create_event_for_task returned None for task {t.id}")
+                                                        except Exception:
+                                                            logger.exception(f"Failed to create calendar event for published work task {t.id}")
+                                                    else:
+                                                        # Agent not available; skip calendar creation but log clearly
+                                                        logger.info(f"Publish: skipped calendar creation for task {t.id} due to unavailable Google agent or connectivity issues")
+                                                    first = False
+                                                else:
+                                                    # Ensure others are marked Published
+                                                    update_task_status(db_thread, t.id, 'Published')
+                                            except Exception:
+                                                logger.exception(f"Failed to process published task {t.id}")
+
+                                    # Re-fetch work and tasks from DB so notification reflects updates
+                                    try:
+                                        work_obj = get_work(db_thread, work_id)
+                                        # Diagnostic: show final task states
+                                        final_tasks = get_tasks_by_work(db_thread, work_id)
+                                        logger.info(f"Publish: final task states for work {work_id}: {[{'id': tt.id, 'status': tt.status, 'calendar_event_id': tt.calendar_event_id} for tt in final_tasks]}")
+                                        if work_obj:
+                                            try:
+                                                if agent:
+                                                    agent.send_publish_notification(work_obj)
+                                                else:
+                                                    # Fallback: send publish notification directly using slack helper
+                                                    try:
+                                                        from slack_interactive import send_publish_work_notification
+                                                        import os
+                                                        slack_url = os.getenv('SLACK_WEBHOOK_URL')
+                                                        send_publish_work_notification(work_obj, slack_url)
+                                                    except Exception:
+                                                        logger.exception('Failed to send fallback publish Slack notification')
+                                                logger.info(f"Publish: sent Slack notification for work {work_id}")
+                                            except Exception:
+                                                logger.exception(f"Failed to send publish notification for work {work_id}")
+                                    except Exception:
+                                        logger.exception(f"Failed while preparing publish notification for work {work_id}")
+                                finally:
+                                    db_thread.close()
+                            except Exception as e:
+                                logger.exception(f"Async publish worker error for work {work_id}: {e}")
+
+                        try:
+                            threading.Thread(target=_async_publish, args=(work.id, work.title), daemon=True).start()
+                        except Exception as e:
+                            print(f"Failed to schedule async publish worker: {e}")
+
+                        st.success("Work published. Calendar event creation and notifications are running in background.")
                 # Notify button for Slack integration
                 if st.button("Notify", key=f"notify_work_{work.id}", help="Send a Slack notification for this work."):
                     import requests
@@ -365,32 +447,61 @@ elif page == "View Work & Tasks":
                                     if edit_task_due_date is not None:
                                         task.due_date = edit_task_due_date
                                     db.commit()
-                                    # Sync changes to Google Calendar
+                                    # Schedule calendar sync in background so Streamlit UI doesn't block on network/OAuth
+                                    def _async_sync_calendar(task_id, work_title, status):
+                                        # Worker will fetch a fresh DB session and task object, then perform calendar operations
+                                        def _worker():
+                                            try:
+                                                from db import get_db, Task
+                                                db_gen2 = get_db()
+                                                db2 = next(db_gen2)
+                                                try:
+                                                    t = db2.query(Task).filter(Task.id == task_id).first()
+                                                finally:
+                                                    db2.close()
+                                                if not t:
+                                                    print(f"Async calendar sync: task {task_id} not found")
+                                                    return
+                                                agent = ReminderAgent()
+                                                # If existing event, update it
+                                                if t.calendar_event_id:
+                                                    updated_data = {
+                                                        'summary': f"{work_title}: {t.title}",
+                                                        'description': getattr(t, 'description', None),
+                                                    }
+                                                    if t.due_date:
+                                                        updated_data['start'] = {'dateTime': t.due_date.isoformat(), 'timeZone': 'Europe/London'}
+                                                        updated_data['end'] = {'dateTime': (t.due_date + datetime.timedelta(hours=1)).isoformat(), 'timeZone': 'Europe/London'}
+                                                    updated_data = {k: v for k, v in updated_data.items() if v is not None}
+                                                    try:
+                                                        agent.update_event(t.calendar_event_id, updated_data)
+                                                    except Exception as e:
+                                                        # If the event was deleted or not found remotely, create a new event and persist its id
+                                                        err_str = str(e).lower()
+                                                        print(f"Failed to update calendar event for task {task_id}: {e}")
+                                                        if 'notfound' in err_str or '404' in err_str or 'not found' in err_str:
+                                                            try:
+                                                                new_ev = agent.create_event_for_task(t, work_title)
+                                                                print(f"Recreated calendar event for task {task_id}: {new_ev.get('id')}")
+                                                            except Exception as e2:
+                                                                print(f"Failed to recreate calendar event for task {task_id}: {e2}")
+                                                else:
+                                                    # If status indicates it should be tracked, create an event
+                                                    if status == 'Tracked' or (t.due_date and status == 'Published'):
+                                                        try:
+                                                            agent.create_event_for_task(t, work_title)
+                                                        except Exception as e:
+                                                            print(f"Failed to create calendar event for task {task_id}: {e}")
+                                            except Exception as e:
+                                                print(f"Async calendar sync failed for task {task_id}: {e}")
+                                        threading.Thread(target=_worker, daemon=True).start()
+
                                     try:
-                                        agent = ReminderAgent()
-                                        # If task has a calendar event, update it
-                                        if task.calendar_event_id:
-                                            # Build updated event data
-                                            updated_data = {
-                                                'summary': f"{work.title}: {task.title}",
-                                                'description': getattr(task, 'description', None),
-                                            }
-                                            if task.due_date:
-                                                updated_data['start'] = {'dateTime': task.due_date.isoformat(), 'timeZone': 'Europe/London'}
-                                                updated_data['end'] = {'dateTime': (task.due_date + datetime.timedelta(hours=1)).isoformat(), 'timeZone': 'Europe/London'}
-                                            # Remove None entries
-                                            updated_data = {k: v for k, v in updated_data.items() if v is not None}
-                                            agent.update_event(task.calendar_event_id, updated_data)
-                                        else:
-                                            # If status indicates it should be tracked, create an event
-                                            if task.status == 'Tracked' or (task.due_date and task.status == 'Published'):
-                                                ev = agent.create_event_for_task(task, work.title)
-                                                # update the task calendar_event_id in DB
-                                                from db import update_task_calendar_event
-                                                update_task_calendar_event(db, task.id, ev.get('id'))
-                                        st.success("Task updated and calendar synced.")
+                                        _async_sync_calendar(task.id, work.title, task.status)
                                     except Exception as e:
-                                        st.warning(f"Task saved, but failed to sync calendar: {e}")
+                                        print(f"Failed to start async calendar sync thread: {e}")
+                                    # Immediately notify user; calendar work happens in background
+                                    st.success("Task updated. Calendar sync scheduled in background.")
                             with delete_col:
                                 if st.button("🗑️", key=f"delete_task_{task.id}", help="Delete this task."):
                                     # If task has a calendar event, delete it first

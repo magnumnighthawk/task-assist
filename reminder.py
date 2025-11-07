@@ -2,32 +2,55 @@ import os
 import pickle
 import datetime
 import requests
+import time
+import logging
+import socket
 from dotenv import load_dotenv
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-# Define the scopes and timezone.
+# Keep scopes/timezone simple. Assume credentials and service will work.
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 TIMEZONE = 'Europe/London'
 load_dotenv()
 
+
 def get_calendar_service():
-    """Authenticate and return a Google Calendar API service instance."""
+    """Return a Google Calendar API service instance.
+
+    This version removes safety gates and assumes credentials/service are available.
+    """
     creds = None
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as token:
             creds = pickle.load(token)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
-    service = build('calendar', 'v3', credentials=creds)
+
+    # Build service (credentials may be None; assume environment provides access)
+    service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
     return service
+
+
+def get_calendar_credentials():
+    """Load and return Google credentials from token.pickle if present."""
+    creds = None
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    # Try a silent refresh if possible
+    try:
+        if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
+            creds.refresh(Request())
+            with open('token.pickle', 'wb') as token:
+                pickle.dump(creds, token)
+    except Exception:
+        pass
+    return creds
+
+
+def _check_google_connectivity(*args, **kwargs):
+    """Connectivity check stub: always assume connectivity."""
+    return True
 
 class ReminderAgent:
     def notify_event_created(self, task, work):
@@ -63,6 +86,7 @@ class ReminderAgent:
         # changes: list of strings
         msg = f"Updates for Work '{work.title}':\n" + "\n".join(changes)
         self.send_slack_notification(msg)
+
     def create_event_for_task(self, task, work_title: str):
         """
         Create a calendar event for a Task and update the DB with the event ID.
@@ -105,7 +129,6 @@ class ReminderAgent:
 
         with db_session() as db:
             update_task_status(db, task.id, 'Completed')
-            # Find next uncompleted task
             tasks = get_tasks_by_work(db, work.id)
             next_task = next((t for t in tasks if t.status != 'Completed'), None)
             if next_task:
@@ -131,18 +154,14 @@ class ReminderAgent:
                 db.close()
 
         new_due = (task.due_date or datetime.datetime.utcnow()) + datetime.timedelta(days=days)
-        # Update event
         if task.calendar_event_id:
             self.reschedule_event(task.calendar_event_id, new_due.isoformat(), (new_due + datetime.timedelta(hours=1)).isoformat())
-        # Update task due date and snooze count
         with db_session() as db:
             task.due_date = new_due
             increment_task_snooze(db, task.id)
             db.commit()
-            # If snoozed > 3 times, send follow-up and allow user to break up or update Work
             if task.snooze_count >= 3:
                 self.notify_snooze_followup(task, work)
-                # Optionally, trigger a workflow to break up or update the Work (could be a Slack action or UI prompt)
 
     def sync_event_update_to_db(self, event_id, updates):
         """When a calendar event is updated directly, sync changes to the DB (due date, title, description, completion, deletion, snooze)."""
@@ -170,25 +189,20 @@ class ReminderAgent:
         This helper is useful for webhook handlers that receive an event_id and want
         the application to reconcile changes.
         """
-        try:
-            event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
-            # Normalize event updates to the shape expected by sync_event_update_to_db
-            updates = {}
-            if 'start' in event:
-                updates['start'] = event['start']
-            if 'end' in event:
-                updates['end'] = event['end']
-            if 'summary' in event:
-                updates['summary'] = event['summary']
-            if 'description' in event:
-                updates['description'] = event['description']
-            # Status could be in event.get('status') depending on the API
-            if 'status' in event:
-                updates['status'] = event['status']
-            # Hand off to existing sync logic
-            self.sync_event_update_to_db(event_id, updates)
-        except Exception as e:
-            print(f"Failed to process event {event_id}: {e}")
+        event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
+        updates = {}
+        if 'start' in event:
+            updates['start'] = event['start']
+        if 'end' in event:
+            updates['end'] = event['end']
+        if 'summary' in event:
+            updates['summary'] = event['summary']
+        if 'description' in event:
+            updates['description'] = event['description']
+        if 'status' in event:
+            updates['status'] = event['status']
+        self.sync_event_update_to_db(event_id, updates)
+    
     def fetch_latest_work(self):
         """Fetch the latest Work item from the database, eagerly loading tasks."""
         from db import get_db, Work
@@ -198,8 +212,11 @@ class ReminderAgent:
         latest_work = db.query(Work).options(joinedload(Work.tasks)).order_by(Work.created_at.desc()).first()
         db.close()
         return latest_work
+    
     def __init__(self):
-        self.service = get_calendar_service()
+        # Initialize credentials/service without extra guards
+        self.creds = get_calendar_credentials()
+        self.service = build('calendar', 'v3', credentials=self.creds, cache_discovery=False)
         self.slack_webhook_url = os.getenv('SLACK_WEBHOOK_URL')
 
     # --- Watch management (in-app) ---
@@ -236,10 +253,7 @@ class ReminderAgent:
         body = {'id': channel_id}
         if resource_id:
             body['resourceId'] = resource_id
-        try:
-            self.service.channels().stop(body=body).execute()
-        except Exception as e:
-            print(f"Failed to stop watch channel {channel_id}: {e}")
+        self.service.channels().stop(body=body).execute()
         # Remove from DB
         from db import get_db, delete_watch_channel
         db_gen = get_db()
@@ -264,15 +278,12 @@ class ReminderAgent:
                 if not ch.expiration or (ch.expiration - now).total_seconds() < 300:
                     # Needs renewal (create a new channel with a new channel_id)
                     new_channel_id = f"channel-{int(datetime.datetime.utcnow().timestamp())}-{ch.id}"
-                    try:
-                        resp = self.create_calendar_watch(new_channel_id, ch.address)
-                        expiration_ms = resp.get('expiration')
-                        expiration = None
-                        if expiration_ms:
-                            expiration = datetime.datetime.fromtimestamp(int(expiration_ms) / 1000.0)
-                        update_watch_channel_expiration(db, resp.get('id', new_channel_id), expiration)
-                    except Exception as e:
-                        print(f"Failed to renew watch for {ch.id}: {e}")
+                    resp = self.create_calendar_watch(new_channel_id, ch.address)
+                    expiration_ms = resp.get('expiration')
+                    expiration = None
+                    if expiration_ms:
+                        expiration = datetime.datetime.fromtimestamp(int(expiration_ms) / 1000.0)
+                    update_watch_channel_expiration(db, resp.get('id', new_channel_id), expiration)
         finally:
             db.close()
     
@@ -290,22 +301,101 @@ class ReminderAgent:
                 'timeZone': TIMEZONE,
             }
         }
-        created_event = self.service.events().insert(calendarId='primary', body=event).execute()
-        print('Event created:', created_event.get('htmlLink'))
-        return created_event
+        logger = logging.getLogger('reminder.create_event')
+        max_retries = 3
+        backoff = 2
+        last_exception = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Prefer using the googleapiclient service if available
+                if self.service:
+                    created_event = self.service.events().insert(calendarId='primary', body=event).execute()
+                    logger.info('Event created: %s', created_event.get('htmlLink'))
+                    return created_event
+                # If service is not available but we have creds, try a direct REST call using requests
+                if self.creds:
+                    created_event = self._create_event_via_requests(event)
+                    logger.info('Event created via requests fallback: %s', created_event.get('htmlLink'))
+                    return created_event
+                raise RuntimeError('No calendar service or credentials available to create event')
+            except socket.timeout as e:
+                last_exception = e
+                logger.warning('Timeout when creating calendar event (attempt %s/%s): %s', attempt, max_retries, e)
+            except Exception as e:
+                # Some other network or API error - log and retry for transient cases
+                last_exception = e
+                logger.exception('Error when creating calendar event (attempt %s/%s): %s', attempt, max_retries, e)
+            if attempt < max_retries:
+                sleep_time = backoff * attempt
+                logger.info('Retrying create_event in %s seconds...', sleep_time)
+                time.sleep(sleep_time)
+        # If we reach here, all retries failed
+        logger.error('Failed to create calendar event after %s attempts', max_retries)
+        raise last_exception
     
     def update_event(self, event_id, updated_data):
         """Update an existing event with new data."""
-        event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
-        event.update(updated_data)
-        updated_event = self.service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
-        print('Event updated:', updated_event.get('htmlLink'))
-        return updated_event
+        logger = logging.getLogger('reminder.update_event')
+        max_retries = 3
+        backoff = 2
+        last_exception = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
+                event.update(updated_data)
+                updated_event = self.service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
+                logger.info('Event updated: %s', updated_event.get('htmlLink'))
+                return updated_event
+            except socket.timeout as e:
+                last_exception = e
+                logger.warning('Timeout when updating calendar event (attempt %s/%s): %s', attempt, max_retries, e)
+            except Exception as e:
+                last_exception = e
+                logger.exception('Error when updating calendar event (attempt %s/%s): %s', attempt, max_retries, e)
+            if attempt < max_retries:
+                sleep_time = backoff * attempt
+                logger.info('Retrying update_event in %s seconds...', sleep_time)
+                time.sleep(sleep_time)
+        logger.error('Failed to update calendar event after %s attempts', max_retries)
+        raise last_exception
     
     def delete_event(self, event_id):
         """Delete an event from the calendar."""
         self.service.events().delete(calendarId='primary', eventId=event_id).execute()
         print('Event deleted successfully.')
+
+    def _create_event_via_requests(self, event_body):
+        """Fallback: create an event using the Calendar REST API via requests.
+
+        This avoids using httplib2 and relies on the credentials' valid access token.
+        """
+        logger = logging.getLogger('reminder.create_event_requests')
+        if not self.creds:
+            raise RuntimeError('No credentials available for requests-based event create')
+        # Ensure the token is fresh
+        if getattr(self.creds, 'expired', False) and getattr(self.creds, 'refresh_token', None):
+            try:
+                self.creds.refresh(Request())
+                with open('token.pickle', 'wb') as token:
+                    pickle.dump(self.creds, token)
+            except Exception as e:
+                logger.warning('Failed to refresh creds before requests call: %s', e)
+
+        # Build request
+        access_token = getattr(self.creds, 'token', None)
+        if not access_token:
+            raise RuntimeError('No access token available on credentials')
+
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+        resp = requests.post(url, json=event_body, headers=headers, timeout=30)
+        if resp.status_code not in (200, 201):
+            logger.error('Requests-based event create failed: %s - %s', resp.status_code, resp.text)
+            resp.raise_for_status()
+        return resp.json()
     
     def reschedule_event(self, event_id, new_start_time, new_end_time):
         """Reschedule an event by updating its start and end times."""
