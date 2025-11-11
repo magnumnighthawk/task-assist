@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime
+from sqlalchemy import Boolean
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
 
@@ -19,6 +20,7 @@ class Work(Base):
     title = Column(String, nullable=False)
     description = Column(Text)
     status = Column(String, default='Draft')  # Draft, Published, Completed
+    notified = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     tasks = relationship('Task', back_populates='work', cascade='all, delete-orphan')
 
@@ -28,6 +30,7 @@ class Task(Base):
     work_id = Column(Integer, ForeignKey('work.id'))
     title = Column(String, nullable=False)
     status = Column(String, default='Published')  # Published, Tracked, Completed
+    notified = Column(Boolean, default=False)
     due_date = Column(DateTime, nullable=True)
     snooze_count = Column(Integer, default=0)
     calendar_event_id = Column(String, nullable=True)
@@ -117,6 +120,26 @@ def get_all_works(db):
 
 def get_all_tasks(db):
     return db.query(Task).all()
+
+def get_unnotified_completed_tasks(db):
+    return db.query(Task).filter(Task.status == 'Completed', Task.notified == False).all()
+
+def get_unnotified_completed_works(db):
+    return db.query(Work).filter(Work.status == 'Completed', Work.notified == False).all()
+
+def mark_task_notified(db, task_id):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task:
+        task.notified = True
+        db.commit()
+    return task
+
+def mark_work_notified(db, work_id):
+    work = db.query(Work).filter(Work.id == work_id).first()
+    if work:
+        work.notified = True
+        db.commit()
+    return work
 
 
 def create_watch_channel(db, channel_id, resource_id, address, expiration=None):
