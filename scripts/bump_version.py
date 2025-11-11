@@ -117,6 +117,8 @@ def main():
     p.add_argument('--apply', action='store_true', help='Write the VERSION file')
     p.add_argument('--commit', action='store_true', help='Commit the VERSION file after writing')
     p.add_argument('--tag', action='store_true', help='Create a git tag for the new version (requires --commit or pre-existing commit)')
+    p.add_argument('--push', action='store_true', help='Push commits and tags to the remote after creating them')
+    p.add_argument('--remote', default='origin', help='Remote name to push to (default: origin)')
     p.add_argument('--force-level', choices=['major', 'minor', 'patch'], help='Force a specific bump level')
     args = p.parse_args()
 
@@ -154,17 +156,41 @@ def main():
             run('git', 'add', 'VERSION')
             run('git', 'commit', '-m', f'Bump version to {new_version}')
             print('Committed VERSION')
+            committed = True
         except subprocess.CalledProcessError as e:
             print('Failed to commit VERSION:', e)
             sys.exit(2)
+    else:
+        committed = False
 
     if args.tag:
         try:
             run('git', 'tag', '-a', new_version, '-m', f'Release {new_version}')
             print(f'Created tag {new_version}')
+            tagged = True
         except subprocess.CalledProcessError as e:
             print('Failed to create tag:', e)
             sys.exit(3)
+    else:
+        tagged = False
+
+    # Optionally push commits and tags to remote
+    if args.push:
+        try:
+            # push commits (if we created one)
+            if committed:
+                print(f'Pushing commit to {args.remote}...')
+                run('git', 'push', args.remote)
+                print('Pushed commit')
+
+            # push tags. Use --follow-tags to push annotated tags that point to pushed commits.
+            if tagged:
+                print(f'Pushing tag {new_version} to {args.remote} (using --follow-tags)...')
+                run('git', 'push', args.remote, '--follow-tags')
+                print('Pushed tag(s)')
+        except subprocess.CalledProcessError as e:
+            print('Failed to push to remote:', e)
+            sys.exit(4)
 
 
 if __name__ == '__main__':
