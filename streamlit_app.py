@@ -462,7 +462,18 @@ elif page == "View Work & Tasks":
                         with col2:
                             status_options = ["Published", "Tracked", "Completed"]
                             status_index = status_options.index(task.status) if task.status in status_options else 0
-                            edit_task_status = st.selectbox("Status", status_options, index=status_index, key=f"task_status_{task.id}", help="Update the task status.")
+                            # Disable status changes for tasks belonging to unpublished work
+                            is_unpublished_work = work.status != "Published"
+                            if is_unpublished_work:
+                                # Show a disabled selectbox when the work isn't published so users can't change status
+                                try:
+                                    edit_task_status = st.selectbox("Status", status_options, index=status_index, key=f"task_status_{task.id}", help="Update the task status.", disabled=True)
+                                except TypeError:
+                                    # Older Streamlit versions may not support `disabled`; fallback to showing text
+                                    st.markdown(f"**Status:** {task.status}")
+                                    edit_task_status = task.status
+                            else:
+                                edit_task_status = st.selectbox("Status", status_options, index=status_index, key=f"task_status_{task.id}", help="Update the task status.")
                         with col3:
                             if task.due_date:
                                 edit_task_due_date = st.date_input("Due date", value=task.due_date, key=f"task_due_date_{task.id}", help="Edit the task due date.")
@@ -493,46 +504,49 @@ elif page == "View Work & Tasks":
                                                 if not t:
                                                     print(f"Async calendar sync: task {task_id} not found")
                                                     return
+                                                # Only attempt to sync calendar if there is an existing calendar event id.
+                                                # Do NOT create new calendar events from the Save action. Creation should be explicit
+                                                # via the "Add to Google Tasks" button or when publishing.
+                                                if not t.calendar_event_id:
+                                                    # Nothing to sync for this save action
+                                                    print(f"Async calendar sync: task {task_id} has no calendar_event_id; skipping calendar sync")
+                                                    return
+
                                                 agent = get_reminder_agent()
-                                                # If existing event, update it
-                                                if t.calendar_event_id:
-                                                    updated_data = {
-                                                        'summary': f"{work_title}: {t.title}",
-                                                        'description': getattr(t, 'description', None),
-                                                    }
-                                                    if t.due_date:
-                                                        updated_data['start'] = {'dateTime': t.due_date.isoformat(), 'timeZone': 'Europe/London'}
-                                                        updated_data['end'] = {'dateTime': (t.due_date + datetime.timedelta(hours=1)).isoformat(), 'timeZone': 'Europe/London'}
-                                                    updated_data = {k: v for k, v in updated_data.items() if v is not None}
-                                                    try:
-                                                        agent.update_event(t.calendar_event_id, updated_data)
-                                                    except Exception as e:
-                                                        # If the event was deleted or not found remotely, create a new event and persist its id
-                                                        err_str = str(e).lower()
-                                                        print(f"Failed to update calendar event for task {task_id}: {e}")
-                                                        if 'notfound' in err_str or '404' in err_str or 'not found' in err_str:
-                                                            try:
-                                                                new_ev = agent.create_event_for_task(t, work_title)
-                                                                print(f"Recreated calendar event for task {task_id}: {new_ev.get('id')}")
-                                                            except Exception as e2:
-                                                                print(f"Failed to recreate calendar event for task {task_id}: {e2}")
-                                                else:
-                                                    # If status indicates it should be tracked, create an event
-                                                    if status == 'Tracked' or (t.due_date and status == 'Published'):
-                                                        try:
-                                                            agent.create_event_for_task(t, work_title)
-                                                        except Exception as e:
-                                                            print(f"Failed to create calendar event for task {task_id}: {e}")
+                                                if not agent:
+                                                    print(f"Async calendar sync: Google ReminderAgent not available; skipping calendar update for task {task_id}")
+                                                    return
+
+                                                # Prepare updated fields and try to update the existing event. If the update fails
+                                                # (for example because the event was removed remotely), do not auto-create a new event here.
+                                                updated_data = {
+                                                    'summary': f"{work_title}: {t.title}",
+                                                    'description': getattr(t, 'description', None),
+                                                }
+                                                if t.due_date:
+                                                    updated_data['start'] = {'dateTime': t.due_date.isoformat(), 'timeZone': 'Europe/London'}
+                                                    updated_data['end'] = {'dateTime': (t.due_date + datetime.timedelta(hours=1)).isoformat(), 'timeZone': 'Europe/London'}
+                                                updated_data = {k: v for k, v in updated_data.items() if v is not None}
+                                                try:
+                                                    agent.update_event(t.calendar_event_id, updated_data)
+                                                except Exception as e:
+                                                    # Log failures but do not create a new calendar event from this save operation.
+                                                    print(f"Failed to update calendar event for task {task_id}: {e}")
                                             except Exception as e:
                                                 print(f"Async calendar sync failed for task {task_id}: {e}")
                                         threading.Thread(target=_worker, daemon=True).start()
 
-                                    try:
-                                        _async_sync_calendar(task.id, work.title, task.status)
-                                    except Exception as e:
-                                        print(f"Failed to start async calendar sync thread: {e}")
-                                    # Use full-width flash message and refresh so it doesn't wrap under the small column
-                                    push_flash("Task updated. Calendar sync scheduled in background.")
+                                    # Only schedule calendar sync if the task already has a mapped calendar_event_id.
+                                    if getattr(task, 'calendar_event_id', None):
+                                        try:
+                                            _async_sync_calendar(task.id, work.title, task.status)
+                                        except Exception as e:
+                                            print(f"Failed to start async calendar sync thread: {e}")
+                                        # Use full-width flash message and refresh so it doesn't wrap under the small column
+                                        push_flash("Task updated. Calendar sync scheduled in background.")
+                                    else:
+                                        # No calendar event exists for this task; just confirm the save without scheduling sync
+                                        push_flash("Task updated.")
                             with delete_col:
                                 if st.button("🗑️", key=f"delete_task_{task.id}", help="Delete this task."):
                                     # If task has a calendar event, delete it first
@@ -546,69 +560,79 @@ elif page == "View Work & Tasks":
                                     db.commit()
                                     push_flash("Task deleted.", level='warning')
 
-                            # Add-to-Google-Tasks button: place next to save/delete so it stays in the same row
-                            schedule_key = f"loading_schedule_task_{task.id}"
-                            if schedule_key not in st.session_state:
-                                st.session_state[schedule_key] = False
-                            if st.session_state[schedule_key]:
-                                with st.spinner("Scheduling task to Google..."):
-                                    pass
-                            if st.button("Add to Google Tasks", key=f"schedule_task_{task.id}", help="Add this task to Google Tasks/calendar."):
-                                # Keep the work expander open across the rerun
-                                st.session_state[expander_key] = True
-                                st.session_state[schedule_key] = True
-                                with st.spinner("Scheduling task to Google..."):
-                                    # Capture shared agent here to avoid re-initializing inside the thread
-                                    agent_for_thread = get_reminder_agent()
+                            # Add-to-Google-Tasks button: only show for Published work and tasks without a mapped calendar event
+                            if work.status == "Published" and not getattr(task, 'calendar_event_id', None):
+                                schedule_key = f"loading_schedule_task_{task.id}"
+                                if schedule_key not in st.session_state:
+                                    st.session_state[schedule_key] = False
+                                if st.session_state[schedule_key]:
+                                    with st.spinner("Scheduling task to Google..."):
+                                        pass
+                                if st.button("Add to Google Tasks", key=f"schedule_task_{task.id}", help="Add this task to Google Tasks/calendar."):
+                                    # Keep the work expander open across the rerun
+                                    st.session_state[expander_key] = True
+                                    st.session_state[schedule_key] = True
+                                    with st.spinner("Scheduling task to Google..."):
+                                        # Capture shared agent here to avoid re-initializing inside the thread
+                                        agent_for_thread = get_reminder_agent()
 
-                                    def _schedule_worker(tid, work_title, agent):
-                                        try:
-                                            # Fresh DB session for thread
-                                            from db import get_db, Task
-                                            db_gen2 = get_db()
-                                            db2 = next(db_gen2)
+                                        def _schedule_worker(tid, work_title, agent):
                                             try:
-                                                t = db2.query(Task).filter(Task.id == tid).first()
-                                                if not t:
-                                                    print(f"Schedule worker: task {tid} not found")
-                                                    return
-                                                summary = f"{work_title}: {t.title}"
-                                                # Use due_date if available, otherwise schedule for tomorrow 08:00
-                                                if t.due_date:
-                                                    start_dt = datetime.datetime.combine(t.due_date, datetime.time(8,0))
-                                                else:
-                                                    start_dt = datetime.datetime.now() + datetime.timedelta(days=1)
-                                                    start_dt = start_dt.replace(hour=8, minute=0, second=0, microsecond=0)
-                                                end_dt = start_dt + datetime.timedelta(hours=1)
+                                                # Fresh DB session for thread
+                                                from db import get_db, Task
+                                                db_gen2 = get_db()
+                                                db2 = next(db_gen2)
                                                 try:
-                                                    ev = agent.create_event(summary, start_dt.isoformat(), end_dt.isoformat(), description=getattr(t, 'description', None))
-                                                    # Persist event id if available
-                                                    ev_id = None
+                                                    t = db2.query(Task).filter(Task.id == tid).first()
+                                                    if not t:
+                                                        print(f"Schedule worker: task {tid} not found")
+                                                        return
+                                                    summary = f"{work_title}: {t.title}"
+                                                    # Use due_date if available, otherwise schedule for tomorrow 08:00
+                                                    if t.due_date:
+                                                        start_dt = datetime.datetime.combine(t.due_date, datetime.time(8,0))
+                                                    else:
+                                                        start_dt = datetime.datetime.now() + datetime.timedelta(days=1)
+                                                        start_dt = start_dt.replace(hour=8, minute=0, second=0, microsecond=0)
+                                                    end_dt = start_dt + datetime.timedelta(hours=1)
                                                     try:
-                                                        if isinstance(ev, dict):
-                                                            ev_id = ev.get('id') or ev.get('selfLink')
-                                                        else:
-                                                            # If agent returns an object with attributes
-                                                            ev_id = getattr(ev, 'id', None) or getattr(ev, 'selfLink', None)
-                                                    except Exception:
+                                                        if not agent:
+                                                            print(f"Schedule worker: ReminderAgent not available for task {tid}")
+                                                            return
+                                                        ev = agent.create_event(summary, start_dt.isoformat(), end_dt.isoformat(), description=getattr(t, 'description', None))
+                                                        # Persist event id if available
                                                         ev_id = None
-                                                    if ev_id:
-                                                        t.calendar_event_id = ev_id
-                                                        db2.commit()
-                                                        print(f"Scheduled task {tid} -> event {ev_id}")
-                                                except Exception as e:
-                                                    print(f"Failed to create calendar event for task {tid}: {e}")
-                                            finally:
-                                                db2.close()
-                                        except Exception as e:
-                                            print(f"Schedule worker error for task {tid}: {e}")
+                                                        try:
+                                                            if isinstance(ev, dict):
+                                                                ev_id = ev.get('id') or ev.get('selfLink')
+                                                            else:
+                                                                # If agent returns an object with attributes
+                                                                ev_id = getattr(ev, 'id', None) or getattr(ev, 'selfLink', None)
+                                                        except Exception:
+                                                            ev_id = None
+                                                        if ev_id:
+                                                            t.calendar_event_id = ev_id
+                                                            # Also mark the task as Tracked
+                                                            t.status = 'Tracked'
+                                                            db2.commit()
+                                                            print(f"Scheduled task {tid} -> event {ev_id}")
+                                                    except Exception as e:
+                                                        print(f"Failed to create calendar event for task {tid}: {e}")
+                                                finally:
+                                                    db2.close()
+                                            except Exception as e:
+                                                print(f"Schedule worker error for task {tid}: {e}")
 
-                                    try:
-                                        threading.Thread(target=_schedule_worker, args=(task.id, work.title, agent_for_thread), daemon=True).start()
-                                        # Show the requested success message
-                                        push_flash('Task pushed to Google Calendar')
-                                    except Exception as e:
-                                        push_flash(f'Failed to schedule: {e}', level='warning')
-                                st.session_state[schedule_key] = False
-                                # Rerun to refresh UI but keep the expander open
-                                st.rerun()
+                                        try:
+                                            # If agent isn't available, inform the user rather than starting the worker
+                                            if not agent_for_thread:
+                                                push_flash('Google Calendar agent not available; cannot schedule.', level='warning')
+                                            else:
+                                                threading.Thread(target=_schedule_worker, args=(task.id, work.title, agent_for_thread), daemon=True).start()
+                                                # Show the requested success message
+                                                push_flash('Task pushed to Google Calendar')
+                                        except Exception as e:
+                                            push_flash(f'Failed to schedule: {e}', level='warning')
+                                    st.session_state[schedule_key] = False
+                                    # Rerun to refresh UI but keep the expander open
+                                    st.rerun()
