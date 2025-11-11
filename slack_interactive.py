@@ -2,6 +2,7 @@
 import datetime
 import requests
 import logging
+import os
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 
@@ -259,6 +260,28 @@ def calendar_push():
     except Exception as e:
         logging.exception("Failed to process calendar push:")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/version', methods=['GET'])
+def version():
+    """Return deployed version information.
+
+    Priority order:
+    1. IMAGE_TAG environment variable (set by CI/CD or Azure App Settings)
+    2. /app/VERSION file baked into the image
+    3. fallback to 'dev'
+    """
+    tag = os.environ.get('IMAGE_TAG')
+    source = 'env'
+    if not tag:
+        try:
+            with open('/app/VERSION', 'r') as fh:
+                tag = fh.read().strip()
+                source = 'file'
+        except Exception:
+            tag = 'dev'
+            source = 'default'
+    return jsonify({'version': tag, 'source': source}), 200
 
 # --- Threaded Flask server start ---
 def start_flask():

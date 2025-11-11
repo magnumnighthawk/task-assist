@@ -37,61 +37,132 @@ This guide helps you deploy the Task Manager application (Flask, Streamlit, Cele
 
 ## 2. Create AKS Cluster (Cheapest Option)
 
-1. Create resource group:
-	```sh
-	az group create --name <resource-group> --location <location>
+# Azure Web App (Single-container) Deployment Guide
+
+This project is intended to be deployed as a single container on Azure Web App for Containers (instead of AKS). That keeps the deployment simple and cost-effective while still allowing automated updates via image tags (semantic version tags or commit SHAs).
+
+## Why single-container on Azure Web App
+- Simpler and cheaper than running AKS for small projects.
+- All services (Flask API, Streamlit UI, Celery worker managed by Supervisor, Nginx) run inside one container using Supervisor.
+- Easy to push a single image to a registry (ACR or Docker Hub) and point an Azure Web App to that image.
+
+## Prerequisites
+- Azure account
+- Azure CLI (az)
+- Podman or Docker (podman is recommended for rootless builds on dev machines)
+- An image registry (Azure Container Registry or Docker Hub)
+
+----
+
+## Quick deploy (recommended)
+
+1. Build and tag locally (use semantic tags like v1.0.0 or the short git SHA):
+	```bash
+	# tag using semantic version
+	podman build -t myregistry/myrepo/task-assist:v1.0.0 -f Dockerfile .
+
+	# or tag with short commit SHA (recommended for CI/CD)
+	podman build -t myregistry/myrepo/task-assist:$(git rev-parse --short HEAD) -f Dockerfile .
 	```
-2. Create AKS cluster (smallest VM):
-	```sh
-	az aks create --resource-group <resource-group> --name <aks-name> --node-count 1 --node-vm-size Standard_B2s --generate-ssh-keys --attach-acr <ACR_NAME>
-	```
-3. Get AKS credentials:
-	```sh
-	az aks get-credentials --resource-group <resource-group> --name <aks-name>
+
+2. Push to your registry (ACR example):
+	```bash
+	az acr login --name <ACR_NAME>
+	podman push myregistry/myrepo/task-assist:v1.0.0
 	```
 
----
+3. Create an Azure Web App for Containers and point it to the image:
+	```bash
+	# create resource group and App Service plan
+	az group create -n <rg> -l <location>
+	az appservice plan create -n <plan> -g <rg> --is-linux --sku B1
 
-## 3. Deploy Kubernetes Manifests
-
-1. Apply all manifests:
-	```sh
-	kubectl apply -f k8s/
+	# create the webapp
+	az webapp create -n <app_name> -g <rg> --plan <plan> --deployment-container-image-name myregistry/myrepo/task-assist:v1.0.0
 	```
-2. (Optional) Install NGINX Ingress Controller:
-	```sh
-	kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.0/deploy/static/provider/cloud/deploy.yaml
-	```
-3. Update DNS or use external IP from Ingress for access.
 
----
+4. Configure environment variables in the Azure portal (or via CLI). Important ones:
+	- SECRET_KEYS, SLACK_WEBHOOK, GOOGLE_CREDENTIALS, etc. (See `.env.sample`)
+	- IMAGE_TAG — optional but useful: set to the value you used to tag the image (e.g. v1.0.0 or the commit SHA). The app exposes `/version` to report this.
 
-## 4. Use Azure Free/Cheapest Tiers
+5. Use Azure Log Stream to view logs from Supervisor-managed processes.
 
-- **AKS**: Control plane is free, pay for nodes. Use Standard_B2s for lowest cost.
-- **ACR**: Use Basic SKU (free for small usage).
-- **Redis**: Use Azure Cache for Redis (has free tier), or deploy in-cluster as shown in `redis-deployment.yaml`.
-- **Storage**: Use Azure Storage (Blob/Table) for persistent storage (free tier available).
-- **Key Vault**: Use Azure Key Vault for secrets (free tier available).
+----
 
----
+## Versioning & identifying the deployed version
 
-## 5. Environment Variables & Secrets
-- Store secrets in Azure Key Vault or Kubernetes secrets.
-- Update manifests to use secrets as needed.
+There are two simple and compatible approaches to identify and control which version is deployed:
 
----
+- Tagged images (recommended): push images with semantic tags (v1.2.0) and/or commit SHAs (e.g. 1a2b3c4). In Azure Web App, set the container image to the exact tag you want to run. This is easy to roll back or promote.
+- IMAGE_TAG/commit file (fallback): the container reads an application `VERSION` file or environment variable `IMAGE_TAG` and serves it at `/version`. During CI/CD set IMAGE_TAG env var in Azure Web App settings to the deployed tag.
 
-## 6. Clean Up Resources
-To avoid charges, delete resources when done:
-```sh
-az group delete --name <resource-group>
+Commands to inspect deployed image in Azure:
+
+```bash
+# Show the configured container image for a webapp
+az webapp config container show --name <app_name> --resource-group <rg>
+
+# Show site configuration (contains linuxFxVersion with image name)
+az webapp show -n <app_name> -g <rg> --query properties.siteConfig.linuxFxVersion -o tsv
 ```
 
----
+If you set the `IMAGE_TAG` application setting, you can also call the app's `/version` endpoint:
 
-## References
-- [AKS Pricing](https://azure.microsoft.com/en-us/pricing/details/kubernetes-service/)
-- [Azure Free Services](https://azure.microsoft.com/en-us/free/)
-- [Azure Cache for Redis](https://azure.microsoft.com/en-us/services/cache/)
+```bash
+curl https://<app_name>.azurewebsites.net/version
+```
+
+This will return a small JSON object with the string used for the deployed image (tag or commit) and the source (env or file).
+
+----
+
+## CI/CD notes
+
+- In CI (GitHub Actions / Azure Pipelines), build and tag with both semantic tag and short SHA, push both tags to registry, then update Azure Web App to point to the desired tag. Example GitHub Actions step:
+
+```yaml
+- name: Build and push
+  run: |
+	TAG=${{ github.ref_name }} || $(git rev-parse --short HEAD)
+	podman build -t myregistry/myrepo/task-assist:${{ github.sha }} -t myregistry/myrepo/task-assist:${{ github.ref_name }} .
+	podman push myregistry/myrepo/task-assist:${{ github.sha }}
+	podman push myregistry/myrepo/task-assist:${{ github.ref_name }}
+```
+
+Local version bumping helper
+
+This repo includes a small helper script at `scripts/bump_version.py` that scans git commits since the last tag and suggests a semantic version bump (major/minor/patch) using Conventional Commit cues. Use it locally to prepare a release, or wire it into your CI to produce the VERSION file and tags.
+
+Example (dry run):
+
+```bash
+python3 scripts/bump_version.py
+```
+
+Apply the bump, commit VERSION and create a tag:
+
+```bash
+python3 scripts/bump_version.py --apply --commit --tag
+```
+
+----
+
+## Environment variables & secrets
+
+- Store secrets in Azure App Service application settings or use Key Vault and reference from App Service.
+- Keep `.env` locally only for development. Do NOT commit secrets to the repo.
+
+----
+
+## Clean up resources
+To avoid charges, delete the resource group when you are finished:
+```bash
+az group delete --name <rg>
+```
+
+----
+
+## Helpful references
+- Azure Web Apps for Containers: https://learn.microsoft.com/azure/app-service/quickstart-docker
+- az webapp config container: https://learn.microsoft.com/cli/azure/webapp/config/container
 

@@ -10,6 +10,9 @@ WORKDIR /app
 # Copy all files
 COPY . .
 
+# Ensure a VERSION file is available inside the image for runtime version reporting
+COPY VERSION /app/VERSION
+
 # Install Python dependencies
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt

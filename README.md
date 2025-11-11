@@ -87,6 +87,10 @@ This launches all services (Flask, Streamlit, Celery, Redis, Nginx, etc.) in a s
 3. Set environment variables in the Azure portal.
 4. Use Azure Log Stream to view logs from all services.
 
+Version reporting
+
+- The application exposes a small HTTP endpoint at `/version` that returns the deployed version and its source. It prefers the `IMAGE_TAG` environment variable (set it in Azure App Service settings), and falls back to the `/app/VERSION` file baked into the image. Set `IMAGE_TAG` during CI/CD to make it explicit which tag is running.
+
 ## Usage
 
 ### Web Interface (Streamlit)
