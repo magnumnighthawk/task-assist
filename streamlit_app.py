@@ -92,6 +92,21 @@ st.markdown(
 # --- Page Navigation ---
 page = st.sidebar.radio("Navigation", ["Task Generator", "View Work & Tasks"])
 
+# Full-width flash messages in session state
+if 'flash_messages' not in st.session_state:
+    st.session_state['flash_messages'] = []
+
+def push_flash(msg: str, level: str = 'success'):
+    """Queue a full-width flash message and trigger a rerun so it displays prominently."""
+    st.session_state.setdefault('flash_messages', []).append({'text': msg, 'level': level})
+    # Trigger a rerun so the message displays at the top of the page
+    st.experimental_rerun()
+
+def pop_flashes():
+    msgs = list(st.session_state.get('flash_messages', []))
+    st.session_state['flash_messages'] = []
+    return msgs
+
 if page == "Task Generator":
     st.markdown("<h1>Task Assist AI</h1>", unsafe_allow_html=True)
     task_description = st.text_input("Enter a new task:", help="Describe the high-level task you want to break down.")
@@ -263,6 +278,13 @@ elif page == "View Work & Tasks":
     db_gen = get_db()
     db: Session = next(db_gen)
     works = get_all_works(db)
+    # Render any queued full-width flash messages
+    flashes = pop_flashes()
+    for m in flashes:
+        if m.get('level') == 'warning':
+            st.warning(m.get('text'))
+        else:
+            st.success(m.get('text'))
     if not works:
         st.info("No Work items found.")
     else:
@@ -285,12 +307,11 @@ elif page == "View Work & Tasks":
                     work.title = edit_title
                     work.description = edit_desc
                     db.commit()
-                    st.success("Work updated.")
+                    push_flash("Work updated.")
                 if st.button("Delete Work", key=f"delete_work_{work.id}", help="Delete this work and all its tasks."):
                     db.delete(work)
                     db.commit()
-                    st.warning("Work deleted.")
-                    st.rerun()
+                    push_flash("Work deleted.", level='warning')
                 # Publish button only for Draft work
                 if work.status == "Draft":
                     if st.button("Publish", key=f"publish_work_{work.id}", help="Publish this work and notify via Slack/Calendar."):
@@ -397,31 +418,35 @@ elif page == "View Work & Tasks":
                         except Exception as e:
                             print(f"Failed to schedule async publish worker: {e}")
 
-                        st.success("Work published. Calendar event creation and notifications are running in background.")
+                        # Notify user succinctly and refresh UI so new status appears
+                        push_flash('Work published.')
                 # Notify button for Slack integration
                 if st.button("Notify", key=f"notify_work_{work.id}", help="Send a Slack notification for this work."):
                     import requests
                     import os
-                    # Use FLASK_API_URL env var if set, else default to local or docker port
                     flask_api_base = os.environ.get("FLASK_API_URL")
                     if not flask_api_base:
-                        # Default: 5050 for local, 9000 for Docker (can be improved with more checks)
                         flask_api_base = "http://127.0.0.1:5050" if os.environ.get("ENV", "local") == "local" else "http://127.0.0.1:9000"
                     api_url = f"{flask_api_base}/api/notify-work/{work.id}"
-                    try:
-                        response = requests.post(api_url)
+
+                    def _notify_worker(url):
                         try:
-                            data = response.json()
-                        except Exception:
-                            data = None
-                        if response.status_code == 200:
-                            st.success("Slack interactive notification sent!")
-                        elif data and 'message' in data:
-                            st.error(f"Failed to send notification: {data['message']}")
-                        else:
-                            st.error(f"Failed to send notification. Status: {response.status_code}. Response: {response.text}")
+                            resp = requests.post(url, timeout=15)
+                            if resp.status_code != 200:
+                                try:
+                                    payload = resp.json()
+                                    msg = payload.get('message') or resp.text
+                                except Exception:
+                                    msg = resp.text
+                                print(f"Notify API returned non-200: {resp.status_code} - {msg}")
+                        except Exception as e:
+                            print(f"Notify worker error: {e}")
+
+                    try:
+                        threading.Thread(target=_notify_worker, args=(api_url,), daemon=True).start()
+                        push_flash('Notification scheduled.')
                     except Exception as e:
-                        st.error(f"Error calling notify API: {e}")
+                        push_flash(f'Failed to schedule notification: {e}', level='warning')
 
                 # List Tasks
                 tasks = get_tasks_by_work(db, work.id)
@@ -504,8 +529,8 @@ elif page == "View Work & Tasks":
                                         _async_sync_calendar(task.id, work.title, task.status)
                                     except Exception as e:
                                         print(f"Failed to start async calendar sync thread: {e}")
-                                    # Immediately notify user; calendar work happens in background
-                                    st.success("Task updated. Calendar sync scheduled in background.")
+                                    # Use full-width flash message and refresh so it doesn't wrap under the small column
+                                    push_flash("Task updated. Calendar sync scheduled in background.")
                             with delete_col:
                                 if st.button("🗑️", key=f"delete_task_{task.id}", help="Delete this task."):
                                     # If task has a calendar event, delete it first
@@ -517,5 +542,4 @@ elif page == "View Work & Tasks":
                                         st.warning(f"Failed to delete calendar event: {e}")
                                     db.delete(task)
                                     db.commit()
-                                    st.warning("Task deleted.")
-                                    st.rerun()
+                                    push_flash("Task deleted.", level='warning')
