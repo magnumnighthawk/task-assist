@@ -42,6 +42,14 @@ def get_calendar_credentials():
         except Exception:
             creds = None
 
+    # If we have credentials and they're still valid, return them immediately
+    try:
+        if creds and not getattr(creds, 'expired', False):
+            return creds
+    except Exception:
+        # If inspection fails, fall back to the normal flow below
+        creds = None
+
     # If we have credentials and they're expired, try to refresh using the refresh token
     try:
         if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
@@ -67,7 +75,7 @@ def get_calendar_credentials():
         except Exception:
             # If interactive flow fails (headless), just return None
             return None
-    # No token and no credentials.json
+    # No ADC/service-account fallback: keep behavior simple for local interactive auth only
     return None
 
 
@@ -237,11 +245,90 @@ class ReminderAgent:
         return latest_work
     
     def __init__(self):
-        # Initialize credentials/service without extra guards
-        self.creds = get_calendar_credentials()
-        # Use Tasks API (v1)
-        self.service = build('tasks', 'v1', credentials=self.creds, cache_discovery=False)
+        # Initialize credentials/service with better logging and graceful fallbacks
+        logger = logging.getLogger('reminder.init')
+        try:
+            self.creds = get_calendar_credentials()
+            if self.creds:
+                logger.info('Google credentials loaded successfully.')
+            else:
+                logger.warning('No Google credentials found. Google Tasks functionality will be limited.')
+        except Exception as e:
+            self.creds = None
+            logger.exception('Error while loading Google credentials: %s', e)
+
+        # Attempt to build the Tasks service if credentials are present; otherwise set to None
+        try:
+            if self.creds:
+                self.service = build('tasks', 'v1', credentials=self.creds, cache_discovery=False)
+            else:
+                self.service = None
+        except Exception as e:
+            self.service = None
+            logger.exception('Failed to initialize Google Tasks service: %s', e)
+
         self.slack_webhook_url = os.getenv('SLACK_WEBHOOK_URL')
+        # Cache for the tasklist id to avoid repeated lookups
+        self._tasklist_id = None
+
+    def get_tasklist_id(self, title: str = "Task manager"):
+        """Return the tasklist id for a given title, creating the list if necessary.
+
+        Uses the service if available; otherwise uses direct HTTP requests with the stored credentials.
+        Caches the id in-memory for subsequent calls.
+        """
+        if self._tasklist_id:
+            return self._tasklist_id
+
+        # Try using the service client first
+        try:
+            if self.service:
+                resp = self.service.tasklists().list(maxResults=100).execute()
+                items = resp.get('items', []) if isinstance(resp, dict) else []
+                for it in items:
+                    if it.get('title') == title:
+                        self._tasklist_id = it.get('id')
+                        return self._tasklist_id
+                # Not found - create it
+                created = self.service.tasklists().insert(body={'title': title}).execute()
+                self._tasklist_id = created.get('id')
+                return self._tasklist_id
+        except Exception:
+            # Fall back to requests-based approach below
+            pass
+
+        # If we don't have a service but have credentials, use requests to list/create
+        if self.creds:
+            try:
+                access_token = getattr(self.creds, 'token', None)
+                if not access_token and getattr(self.creds, 'refresh_token', None):
+                    try:
+                        self.creds.refresh(Request())
+                        with open('token.pickle', 'wb') as token:
+                            pickle.dump(self.creds, token)
+                        access_token = getattr(self.creds, 'token', None)
+                    except Exception:
+                        access_token = None
+                if access_token:
+                    headers = {'Authorization': f'Bearer {access_token}'}
+                    url = 'https://tasks.googleapis.com/tasks/v1/users/@me/lists'
+                    r = requests.get(url, headers=headers, timeout=20)
+                    if r.status_code == 200:
+                        items = r.json().get('items', [])
+                        for it in items:
+                            if it.get('title') == title:
+                                self._tasklist_id = it.get('id')
+                                return self._tasklist_id
+                    # Create list
+                    r2 = requests.post(url, json={'title': title}, headers=headers, timeout=20)
+                    if r2.status_code in (200, 201):
+                        self._tasklist_id = r2.json().get('id')
+                        return self._tasklist_id
+            except Exception:
+                pass
+
+        # As a last resort, return the default string (deprecated) so calls don't blow up
+        return '@default'
 
     # --- Watch management (in-app) ---
     def create_calendar_watch(self, channel_id: str, address: str, ttl_seconds: int = 3600):
@@ -305,7 +392,8 @@ class ReminderAgent:
         for attempt in range(1, max_retries + 1):
             try:
                 if self.service:
-                    created_task = self.service.tasks().insert(tasklist='@default', body=task_body).execute()
+                    tl = self.get_tasklist_id()
+                    created_task = self.service.tasks().insert(tasklist=tl, body=task_body).execute()
                     logger.info('Task created: %s', created_task.get('selfLink'))
                     return created_task
                 if self.creds:
@@ -337,21 +425,29 @@ class ReminderAgent:
         last_exception = None
         for attempt in range(1, max_retries + 1):
             try:
-                task = self.service.tasks().get(tasklist='@default', task=event_id).execute()
+                tl = self.get_tasklist_id()
+                task = self.service.tasks().get(tasklist=tl, task=event_id).execute()
                 # Map calendar-like structure to tasks fields if necessary
                 if 'summary' in updated_data:
                     task['title'] = updated_data['summary']
                 if 'description' in updated_data:
                     task['notes'] = updated_data['description']
                 if 'start' in updated_data and isinstance(updated_data['start'], dict) and 'dateTime' in updated_data['start']:
-                    task['due'] = updated_data['start']['dateTime']
+                    due = updated_data['start']['dateTime']
+                    # Normalize to RFC3339 for Tasks API (append 'Z' if naive)
+                    if isinstance(due, str):
+                        if due.endswith('Z') is False and ('+' not in due and '-' not in due[10:]):
+                            due = due + 'Z'
+                    task['due'] = due
                 if 'status' in updated_data:
                     # Map 'completed' to tasks status
                     if updated_data['status'] == 'completed':
                         task['status'] = 'completed'
                     else:
-                        task['status'] = updated_data['status']
-                updated_task = self.service.tasks().update(tasklist='@default', task=event_id, body=task).execute()
+                        # Tasks API expects 'needsAction' (or 'completed'). Map other internal states to 'needsAction'
+                        task['status'] = 'needsAction'
+                tl = self.get_tasklist_id()
+                updated_task = self.service.tasks().update(tasklist=tl, task=event_id, body=task).execute()
                 logger.info('Task updated: %s', updated_task.get('selfLink'))
                 return updated_task
             except socket.timeout as e:
@@ -370,7 +466,8 @@ class ReminderAgent:
     def delete_event(self, event_id):
         """Delete a Google Task by id (keeps name delete_event)."""
         try:
-            self.service.tasks().delete(tasklist='@default', task=event_id).execute()
+            tl = self.get_tasklist_id()
+            self.service.tasks().delete(tasklist=tl, task=event_id).execute()
             print('Task deleted successfully.')
         except Exception as e:
             print(f'Failed to delete task: {e}')
@@ -400,7 +497,9 @@ class ReminderAgent:
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json'
         }
-        url = 'https://www.googleapis.com/tasks/v1/lists/@default/tasks'
+        tl = self.get_tasklist_id()
+        # Use REST endpoint for tasks in a specific list
+        url = f'https://www.googleapis.com/tasks/v1/lists/{tl}/tasks'
         resp = requests.post(url, json=event_body, headers=headers, timeout=30)
         if resp.status_code not in (200, 201):
             logger.error('Requests-based task create failed: %s - %s', resp.status_code, resp.text)
@@ -422,7 +521,8 @@ class ReminderAgent:
 
         Note: Tasks API doesn't support time-based querying; we fetch recent tasks and filter by due.
         """
-        tasks_result = self.service.tasks().list(tasklist='@default', maxResults=100, showCompleted=False).execute()
+        tl = self.get_tasklist_id()
+        tasks_result = self.service.tasks().list(tasklist=tl, maxResults=100, showCompleted=False).execute()
         items = tasks_result.get('items', [])
         now = datetime.datetime.utcnow()
         upcoming = []

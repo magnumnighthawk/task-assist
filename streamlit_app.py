@@ -100,12 +100,32 @@ def push_flash(msg: str, level: str = 'success'):
     """Queue a full-width flash message and trigger a rerun so it displays prominently."""
     st.session_state.setdefault('flash_messages', []).append({'text': msg, 'level': level})
     # Trigger a rerun so the message displays at the top of the page
-    st.experimental_rerun()
+    st.rerun()
 
 def pop_flashes():
     msgs = list(st.session_state.get('flash_messages', []))
     st.session_state['flash_messages'] = []
     return msgs
+
+
+# ReminderAgent singleton helper (cached in session_state)
+def get_reminder_agent():
+    """Return a single ReminderAgent instance stored in Streamlit session state.
+
+    This avoids re-instantiating the agent (and re-running credential checks) on
+    every click. If initialization fails, store the error string for diagnostics.
+    """
+    agent = st.session_state.get('reminder_agent')
+    if agent is None:
+        try:
+            agent = ReminderAgent()
+            st.session_state['reminder_agent'] = agent
+            st.session_state.pop('reminder_init_error', None)
+        except Exception as e:
+            st.session_state['reminder_agent'] = None
+            st.session_state['reminder_init_error'] = str(e)
+            agent = None
+    return agent
 
 if page == "Task Generator":
     st.markdown("<h1>Task Assist AI</h1>", unsafe_allow_html=True)
@@ -201,30 +221,8 @@ if page == "Task Generator":
                     st.session_state.edit_mode[i], st.session_state.edit_mode[i+1] = st.session_state.edit_mode[i+1], st.session_state.edit_mode[i]
                     st.session_state.subtask_due_dates[i], st.session_state.subtask_due_dates[i+1] = st.session_state.subtask_due_dates[i+1], st.session_state.subtask_due_dates[i]
                     st.rerun()
-            with col_sched:
-                schedule_key = f"loading_schedule_{i}_{subtask['uid']}"
-                if schedule_key not in st.session_state:
-                    st.session_state[schedule_key] = False
-                if st.session_state[schedule_key]:
-                    with st.spinner("Scheduling task..."):
-                        pass
-                if st.button("Add to Google Tasks", key=f"schedule_{i}_{subtask['uid']}", help="Add this subtask to Google Tasks."):
-                    st.session_state[schedule_key] = True
-                    with st.spinner("Scheduling task..."):
-                        agent = ReminderAgent()
-                        summary = subtask['description']
-                        start_time = datetime.datetime.combine(due_date, datetime.time(8, 0)).isoformat()
-                        end_time = (datetime.datetime.combine(due_date, datetime.time(8, 0)) + datetime.timedelta(hours=1)).isoformat()
-                        try:
-                            task = agent.create_event(summary, start_time, end_time, description=f"Auto-scheduled by Task Assist. Priority: {subtask['priority']}")
-                            st.success(f"Google Task created for subtask: {summary}")
-                            # Tasks API doesn't provide a human-facing htmlLink; show selfLink or id
-                            link = task.get('selfLink') or task.get('id')
-                            st.write(f"Task reference: {link}")
-                        except Exception as e:
-                            st.error(f"Failed to create Google Task: {e}")
-                    st.session_state[schedule_key] = False
-                    st.rerun()
+            # Removed inline "Add to Google Tasks" scheduling from generator view.
+            # Scheduling should happen from the persistent Task list on the "View Work & Tasks" page.
 
     # Show only when generated subtasks exist
     if 'subtasks' in st.session_state and st.session_state.subtasks:
@@ -289,7 +287,11 @@ elif page == "View Work & Tasks":
         st.info("No Work items found.")
     else:
         for work in works:
-            with st.expander(f"{work.title} (ID: {work.id})", expanded=False):
+            # Preserve expander open/closed state across reruns so actions inside don't collapse it
+            expander_key = f"work_expanded_{work.id}"
+            if expander_key not in st.session_state:
+                st.session_state[expander_key] = False
+            with st.expander(f"{work.title} (ID: {work.id})", expanded=st.session_state.get(expander_key, False)):
                 # Status indicator
                 status_class = {
                     "Draft": "status-badge status-draft",
@@ -339,7 +341,7 @@ elif page == "View Work & Tasks":
                                     agent = None
                                     if connectivity_ok:
                                         try:
-                                            agent = ReminderAgent()
+                                            agent = get_reminder_agent()
                                         except Exception as e:
                                             # Likely missing credentials/token; log and proceed to send Slack only
                                             logger.warning(f"Google Calendar agent not available: {e}")
@@ -491,7 +493,7 @@ elif page == "View Work & Tasks":
                                                 if not t:
                                                     print(f"Async calendar sync: task {task_id} not found")
                                                     return
-                                                agent = ReminderAgent()
+                                                agent = get_reminder_agent()
                                                 # If existing event, update it
                                                 if t.calendar_event_id:
                                                     updated_data = {
@@ -536,10 +538,77 @@ elif page == "View Work & Tasks":
                                     # If task has a calendar event, delete it first
                                     try:
                                         if task.calendar_event_id:
-                                            agent = ReminderAgent()
+                                            agent = get_reminder_agent()
                                             agent.delete_event(task.calendar_event_id)
                                     except Exception as e:
                                         st.warning(f"Failed to delete calendar event: {e}")
                                     db.delete(task)
                                     db.commit()
                                     push_flash("Task deleted.", level='warning')
+
+                            # Add-to-Google-Tasks button: place next to save/delete so it stays in the same row
+                            schedule_key = f"loading_schedule_task_{task.id}"
+                            if schedule_key not in st.session_state:
+                                st.session_state[schedule_key] = False
+                            if st.session_state[schedule_key]:
+                                with st.spinner("Scheduling task to Google..."):
+                                    pass
+                            if st.button("Add to Google Tasks", key=f"schedule_task_{task.id}", help="Add this task to Google Tasks/calendar."):
+                                # Keep the work expander open across the rerun
+                                st.session_state[expander_key] = True
+                                st.session_state[schedule_key] = True
+                                with st.spinner("Scheduling task to Google..."):
+                                    # Capture shared agent here to avoid re-initializing inside the thread
+                                    agent_for_thread = get_reminder_agent()
+
+                                    def _schedule_worker(tid, work_title, agent):
+                                        try:
+                                            # Fresh DB session for thread
+                                            from db import get_db, Task
+                                            db_gen2 = get_db()
+                                            db2 = next(db_gen2)
+                                            try:
+                                                t = db2.query(Task).filter(Task.id == tid).first()
+                                                if not t:
+                                                    print(f"Schedule worker: task {tid} not found")
+                                                    return
+                                                summary = f"{work_title}: {t.title}"
+                                                # Use due_date if available, otherwise schedule for tomorrow 08:00
+                                                if t.due_date:
+                                                    start_dt = datetime.datetime.combine(t.due_date, datetime.time(8,0))
+                                                else:
+                                                    start_dt = datetime.datetime.now() + datetime.timedelta(days=1)
+                                                    start_dt = start_dt.replace(hour=8, minute=0, second=0, microsecond=0)
+                                                end_dt = start_dt + datetime.timedelta(hours=1)
+                                                try:
+                                                    ev = agent.create_event(summary, start_dt.isoformat(), end_dt.isoformat(), description=getattr(t, 'description', None))
+                                                    # Persist event id if available
+                                                    ev_id = None
+                                                    try:
+                                                        if isinstance(ev, dict):
+                                                            ev_id = ev.get('id') or ev.get('selfLink')
+                                                        else:
+                                                            # If agent returns an object with attributes
+                                                            ev_id = getattr(ev, 'id', None) or getattr(ev, 'selfLink', None)
+                                                    except Exception:
+                                                        ev_id = None
+                                                    if ev_id:
+                                                        t.calendar_event_id = ev_id
+                                                        db2.commit()
+                                                        print(f"Scheduled task {tid} -> event {ev_id}")
+                                                except Exception as e:
+                                                    print(f"Failed to create calendar event for task {tid}: {e}")
+                                            finally:
+                                                db2.close()
+                                        except Exception as e:
+                                            print(f"Schedule worker error for task {tid}: {e}")
+
+                                    try:
+                                        threading.Thread(target=_schedule_worker, args=(task.id, work.title, agent_for_thread), daemon=True).start()
+                                        # Show the requested success message
+                                        push_flash('Task pushed to Google Calendar')
+                                    except Exception as e:
+                                        push_flash(f'Failed to schedule: {e}', level='warning')
+                                st.session_state[schedule_key] = False
+                                # Rerun to refresh UI but keep the expander open
+                                st.rerun()
