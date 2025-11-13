@@ -90,7 +90,7 @@ st.markdown(
 )
 
 # --- Page Navigation ---
-page = st.sidebar.radio("Navigation", ["Task Generator", "View Work & Tasks"])
+page = st.sidebar.radio("Navigation", ["Task Generator", "View Work & Tasks", "Agent Console"])
 
 # Full-width flash messages in session state
 if 'flash_messages' not in st.session_state:
@@ -153,6 +153,8 @@ if page == "Task Generator":
             st.session_state.subtask_due_dates = [None] * len(subtasks)
         st.session_state.loading_generate = False
         st.rerun()
+
+    
 
 
     def get_priority_class(priority):
@@ -270,6 +272,137 @@ if page == "Task Generator":
     if st.session_state.loading_revise:
         with st.spinner("Revising subtasks..."):
             pass
+
+elif page == "Agent Console":
+    # Agent Console page (top-level branch so it renders when selected)
+    try:
+        from agents import Agent, TOOLS
+        have_agent = True
+    except Exception:
+        have_agent = False
+
+    st.markdown("<h1>Agent Console</h1>", unsafe_allow_html=True)
+    if not have_agent:
+        st.error("Agent components not available. Ensure the `agents` package exists and is importable.")
+    else:
+        if 'agent' not in st.session_state:
+            st.session_state['agent'] = Agent(tools=TOOLS)
+
+        # Allow the user to suggest how many subtasks they want; this will be injected into the plan if missing
+        agent_max = st.number_input("Max subtasks (used to guide planning)", min_value=1, max_value=50, value=4, key='agent_max_subtasks')
+
+        instruction = st.text_area("Instruction to Agent:", value="Create a work from this task: Plan a birthday party and generate 4 subtasks.")
+        c1, c2 = st.columns([1,1])
+        with c1:
+            if st.button("Plan"):
+                with st.spinner("Planning..."):
+                    plan = st.session_state['agent'].run_instruction(instruction, execute=False)
+                    # If the model plan doesn't include max_subtasks, inject the UI value so the user can review it
+                    if isinstance(plan, dict) and plan.get('args') is not None:
+                        if 'max_subtasks' not in plan['args'] and agent_max:
+                            try:
+                                plan['args']['max_subtasks'] = int(agent_max)
+                            except Exception:
+                                pass
+                    st.session_state['agent_plan'] = plan
+                    # Reset any previous execution request state (do not modify widget-backed keys)
+                    st.session_state.pop('agent_execute_requested', None)
+        with c2:
+            # When Execute is clicked we set a session flag so subsequent reruns can show the confirmation checkbox
+            if st.button("Execute"):
+                if 'agent_plan' not in st.session_state:
+                    st.warning("Please click Plan first to review the planned action before executing.")
+                else:
+                    st.session_state['agent_execute_requested'] = True
+
+        # If an execution was requested, show confirmation UI (persistent across reruns)
+        if st.session_state.get('agent_execute_requested'):
+            plan = st.session_state.get('agent_plan', {})
+            action = plan.get('action')
+            args = plan.get('args', {}) or {}
+            # Ensure UI-provided max_subtasks is included in args before executing
+            if agent_max and 'max_subtasks' not in args:
+                try:
+                    args['max_subtasks'] = int(agent_max)
+                    # persist back into session plan
+                    st.session_state['agent_plan']['args'] = args
+                except Exception:
+                    pass
+
+            mutating_tools = {'create_work', 'publish_work', 'schedule_task_to_calendar', 'queue_celery_task'}
+            # Helper to normalize arguments and call tools (handles create_work 'task' -> generated subtasks)
+            def _prepare_and_call_tool(action_name, action_args):
+                agent_obj = st.session_state['agent']
+                tool_fn = agent_obj.tools.get(action_name)
+                if not tool_fn:
+                    return {'error': f"Tool '{action_name}' not found"}
+
+                # Special-case create_work to accept 'task' + 'max_subtasks' and call generate_subtasks
+                if action_name == 'create_work':
+                    # If the plan provided a 'task' (single string), translate to title/description
+                    title = action_args.get('title') or action_args.get('task') or ''
+                    description = action_args.get('description', '')
+                    tasks_payload = action_args.get('tasks')
+                    # If tasks not provided, try to generate using the generate_subtasks tool
+                    if not tasks_payload and action_args.get('task'):
+                        gen_tool = agent_obj.tools.get('generate_subtasks')
+                        try:
+                            gen_res = gen_tool(action_args.get('task'), int(action_args.get('max_subtasks', 4)))
+                            # gen_res should include work_name, work_description, subtasks
+                            title = title or gen_res.get('work_name') or action_args.get('task')
+                            description = description or gen_res.get('work_description', '')
+                            subtasks = gen_res.get('subtasks', []) if isinstance(gen_res, dict) else []
+                            tasks_payload = []
+                            for stask in subtasks:
+                                tasks_payload.append({'title': stask.get('description'), 'status': 'pending'})
+                        except Exception as e:
+                            return {'error': f'Failed to generate subtasks: {e}'}
+
+                    call_args = {'title': title, 'description': description, 'tasks': tasks_payload or [], 'status': action_args.get('status', 'Draft')}
+                    try:
+                        return tool_fn(**call_args)
+                    except TypeError as e:
+                        return {'error': str(e)}
+
+                # Default: call tool with provided args
+                try:
+                    return tool_fn(**action_args)
+                except TypeError as e:
+                    return {'error': str(e)}
+            # Execution: mutating tools require explicit confirmation
+            if action in mutating_tools:
+                # Use the checkbox widget return value; do not assign to st.session_state['agent_confirm']
+                confirm = st.checkbox(f"Confirm execution of mutating action: {action}", key='agent_confirm')
+                if confirm:
+                    with st.spinner("Executing..."):
+                        # Prepare args (e.g. expand 'task' -> generated subtasks) and call the tool
+                        result = _prepare_and_call_tool(action, args)
+                        if result and isinstance(result, dict) and result.get('error'):
+                            st.session_state['agent_last'] = {'action': action, 'error': result.get('error')}
+                            st.error(f"Execution failed: {result.get('error')}")
+                        else:
+                            st.session_state['agent_last'] = {'action': action, 'result': result}
+                            st.success("Action executed. See result below.")
+                    # Clear execute request state so the confirmation widget is hidden on next render
+                    st.session_state['agent_execute_requested'] = False
+            else:
+                # Non-mutating: execute immediately when requested
+                with st.spinner("Executing..."):
+                    result = _prepare_and_call_tool(action, args)
+                    if result and isinstance(result, dict) and result.get('error'):
+                        st.session_state['agent_last'] = {'action': action, 'error': result.get('error')}
+                        st.error(f"Execution failed: {result.get('error')}")
+                    else:
+                        st.session_state['agent_last'] = {'action': action, 'result': result}
+                        st.success("Action executed. See result below.")
+                st.session_state['agent_execute_requested'] = False
+
+        if 'agent_plan' in st.session_state:
+            st.subheader("Planned action")
+            st.json(st.session_state['agent_plan'])
+        if 'agent_last' in st.session_state:
+            st.subheader("Last Agent Response")
+            st.json(st.session_state['agent_last'])
 
 elif page == "View Work & Tasks":
     st.markdown("<h1>Work & Tasks List</h1>", unsafe_allow_html=True)

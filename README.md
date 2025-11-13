@@ -126,3 +126,39 @@ Refer to `docs/LIFECYCLE.md` and in-code docstrings for more on the canonical fl
 ## Contributing
 
 Contributions welcome. Please fork the repository and submit pull requests.
+
+## Agent: AI Brain & Tooling
+
+This project includes a lightweight AI Agent that can plan and execute actions by calling application tools (DB, Slack, Calendar, Scheduler).
+
+- Local agent server: `agents/server.py` exposes:
+   - `GET /agent/tools` — list available tools
+   - `POST /agent/plan` — return the planned action (LLM output parsed as JSON) without executing
+   - `POST /agent` — execute an instruction; pass JSON `{ "instruction": "...", "execute": true }` (defaults to execute=true)
+
+- Streamlit Agent Console: the UI includes an Agent Console where users can Plan and then Execute instructions. The Console requires a Plan step and explicit confirmation for mutating actions (create/publish/schedule).
+
+- Environment variables:
+   - `OPENAI_API_KEY` — (optional) if set the Agent will use the OpenAI API to generate plans and actions. If not set, the Agent operates in safe mode and returns descriptive responses and available tools.
+   - `OPENAI_MODEL` — (optional) LLM model name, defaults to `gpt-3.5-turbo`.
+   - `SLACK_WEBHOOK_URL` — webhook used by reminder helpers for notifications.
+
+Security and safety notes:
+- The Agent can call tools that mutate state (create_work, publish_work, schedule_task_to_calendar, queue_celery_task). The Streamlit Console enforces a Plan -> Review -> Execute flow and adds a confirmation checkbox for mutating tools. If you expose the `/agent` endpoint publicly, add authentication and request validation.
+
+Deployment:
+- The Agent server is started via Supervisor/Procfile as `agent: python agents/server.py` and included in the container by the updated `Procfile` and `supervisord.conf`.
+
+Examples:
+
+Plan only (no execution):
+
+```
+curl -X POST http://localhost:5600/agent/plan -H "Content-Type: application/json" -d '{"instruction":"Create a work: Prepare a team meeting and make 3 subtasks."}'
+```
+
+Execute a confirmed instruction:
+
+```
+curl -X POST http://localhost:5600/agent -H "Content-Type: application/json" -d '{"instruction":"Create a work: Prepare a team meeting and make 3 subtasks.", "execute": true}'
+```
