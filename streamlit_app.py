@@ -282,120 +282,158 @@ elif page == "Agent Console":
         have_agent = False
 
     st.markdown("<h1>Agent Console</h1>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style='padding:10px;border-left:4px solid #4f8cff;background:#f1f7ff'>
+        <b>How to use the Agent Console:</b>
+        <ul>
+        <li>Enter a natural language instruction (for example: "Create a work: Plan a team offsite and generate 5 subtasks").</li>
+        <li>Click <b>Plan</b> to ask the agent to produce a safe JSON plan. The plan appears in the output trail.</li>
+        <li>If the plan proposes a mutating action (publish, create, schedule), click <b>Confirm</b> on the trail entry, then click <b>Execute</b> to run it.</li>
+        <li>Execution results are shown inline in the trail. Use <b>Clear Trail</b> to remove history.</li>
+        </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     if not have_agent:
         st.error("Agent components not available. Ensure the `agents` package exists and is importable.")
     else:
         if 'agent' not in st.session_state:
             st.session_state['agent'] = Agent(tools=TOOLS)
 
-        # Allow the user to suggest how many subtasks they want; this will be injected into the plan if missing
-        agent_max = st.number_input("Max subtasks (used to guide planning)", min_value=1, max_value=50, value=4, key='agent_max_subtasks')
-
+        # Agent Console input
         instruction = st.text_area("Instruction to Agent:", value="Create a work from this task: Plan a birthday party and generate 4 subtasks.")
+
+        # Trail: a list of dicts representing planned steps, confirmations and results.
+        if 'agent_trail' not in st.session_state:
+            st.session_state['agent_trail'] = []
+
         c1, c2 = st.columns([1,1])
         with c1:
             if st.button("Plan"):
                 with st.spinner("Planning..."):
                     plan = st.session_state['agent'].run_instruction(instruction, execute=False)
-                    # If the model plan doesn't include max_subtasks, inject the UI value so the user can review it
-                    if isinstance(plan, dict) and plan.get('args') is not None:
-                        if 'max_subtasks' not in plan['args'] and agent_max:
+                    # If plan lacks numeric hints like max_subtasks, try to extract from the instruction text
+                    def _extract_max_from_text(text: str):
+                        import re
+                        m = re.search(r"(\d+)\s*(subtasks|tasks|items)", text, re.I)
+                        if m:
                             try:
-                                plan['args']['max_subtasks'] = int(agent_max)
+                                return int(m.group(1))
                             except Exception:
-                                pass
-                    st.session_state['agent_plan'] = plan
-                    # Reset any previous execution request state (do not modify widget-backed keys)
+                                return None
+                        return None
+
+                    if isinstance(plan, dict) and plan.get('args') is not None:
+                        if 'max_subtasks' not in plan['args']:
+                            maybe = _extract_max_from_text(instruction)
+                            if maybe:
+                                plan['args']['max_subtasks'] = maybe
+
+                    # Append plan to the trail with a timestamp and status
+                    entry = {'id': str(uuid.uuid4()), 'created_at': datetime.datetime.utcnow().isoformat(), 'instruction': instruction, 'plan': plan, 'status': 'planned', 'result': None}
+                    st.session_state['agent_trail'].insert(0, entry)
+                    # Remove execute request flag if present
                     st.session_state.pop('agent_execute_requested', None)
         with c2:
-            # When Execute is clicked we set a session flag so subsequent reruns can show the confirmation checkbox
-            if st.button("Execute"):
-                if 'agent_plan' not in st.session_state:
-                    st.warning("Please click Plan first to review the planned action before executing.")
-                else:
-                    st.session_state['agent_execute_requested'] = True
+            if st.button("Clear Trail"):
+                st.session_state['agent_trail'] = []
 
-        # If an execution was requested, show confirmation UI (persistent across reruns)
-        if st.session_state.get('agent_execute_requested'):
-            plan = st.session_state.get('agent_plan', {})
-            action = plan.get('action')
-            args = plan.get('args', {}) or {}
-            # Ensure UI-provided max_subtasks is included in args before executing
-            if agent_max and 'max_subtasks' not in args:
-                try:
-                    args['max_subtasks'] = int(agent_max)
-                    # persist back into session plan
-                    st.session_state['agent_plan']['args'] = args
-                except Exception:
-                    pass
+        # Render the trail with inline controls. Each entry shows plan, explanation and
+        # offers Confirm / Execute buttons depending on the plan's 'confirm' flag.
+        mutating_tools = {'create_work', 'publish_work', 'schedule_task_to_calendar', 'queue_celery_task'}
 
-            mutating_tools = {'create_work', 'publish_work', 'schedule_task_to_calendar', 'queue_celery_task'}
-            # Helper to normalize arguments and call tools (handles create_work 'task' -> generated subtasks)
-            def _prepare_and_call_tool(action_name, action_args):
-                agent_obj = st.session_state['agent']
-                tool_fn = agent_obj.tools.get(action_name)
-                if not tool_fn:
-                    return {'error': f"Tool '{action_name}' not found"}
+        def _prepare_and_call_tool(action_name, action_args):
+            agent_obj = st.session_state['agent']
+            tool_fn = agent_obj.tools.get(action_name)
+            if not tool_fn:
+                return {'error': f"Tool '{action_name}' not found"}
 
-                # Special-case create_work to accept 'task' + 'max_subtasks' and call generate_subtasks
-                if action_name == 'create_work':
-                    # If the plan provided a 'task' (single string), translate to title/description
-                    title = action_args.get('title') or action_args.get('task') or ''
-                    description = action_args.get('description', '')
-                    tasks_payload = action_args.get('tasks')
-                    # If tasks not provided, try to generate using the generate_subtasks tool
-                    if not tasks_payload and action_args.get('task'):
-                        gen_tool = agent_obj.tools.get('generate_subtasks')
-                        try:
-                            gen_res = gen_tool(action_args.get('task'), int(action_args.get('max_subtasks', 4)))
-                            # gen_res should include work_name, work_description, subtasks
-                            title = title or gen_res.get('work_name') or action_args.get('task')
-                            description = description or gen_res.get('work_description', '')
-                            subtasks = gen_res.get('subtasks', []) if isinstance(gen_res, dict) else []
-                            tasks_payload = []
-                            for stask in subtasks:
-                                tasks_payload.append({'title': stask.get('description'), 'status': 'pending'})
-                        except Exception as e:
-                            return {'error': f'Failed to generate subtasks: {e}'}
-
-                    call_args = {'title': title, 'description': description, 'tasks': tasks_payload or [], 'status': action_args.get('status', 'Draft')}
+            # Special-case create_work to accept 'task' + 'max_subtasks' and call generate_subtasks
+            if action_name == 'create_work':
+                title = action_args.get('title') or action_args.get('task') or ''
+                description = action_args.get('description', '')
+                tasks_payload = action_args.get('tasks')
+                if not tasks_payload and action_args.get('task'):
+                    gen_tool = agent_obj.tools.get('generate_subtasks')
                     try:
-                        return tool_fn(**call_args)
-                    except TypeError as e:
-                        return {'error': str(e)}
+                        gen_res = gen_tool(action_args.get('task'), int(action_args.get('max_subtasks', 4)))
+                        title = title or gen_res.get('work_name') or action_args.get('task')
+                        description = description or gen_res.get('work_description', '')
+                        subtasks = gen_res.get('subtasks', []) if isinstance(gen_res, dict) else []
+                        tasks_payload = []
+                        for stask in subtasks:
+                            tasks_payload.append({'title': stask.get('description'), 'status': 'pending'})
+                    except Exception as e:
+                        return {'error': f'Failed to generate subtasks: {e}'}
 
-                # Default: call tool with provided args
+                call_args = {'title': title, 'description': description, 'tasks': tasks_payload or [], 'status': action_args.get('status', 'Draft')}
                 try:
-                    return tool_fn(**action_args)
+                    return tool_fn(**call_args)
                 except TypeError as e:
                     return {'error': str(e)}
-            # Execution: mutating tools require explicit confirmation
-            if action in mutating_tools:
-                # Use the checkbox widget return value; do not assign to st.session_state['agent_confirm']
-                confirm = st.checkbox(f"Confirm execution of mutating action: {action}", key='agent_confirm')
-                if confirm:
-                    with st.spinner("Executing..."):
-                        # Prepare args (e.g. expand 'task' -> generated subtasks) and call the tool
-                        result = _prepare_and_call_tool(action, args)
-                        if result and isinstance(result, dict) and result.get('error'):
-                            st.session_state['agent_last'] = {'action': action, 'error': result.get('error')}
-                            st.error(f"Execution failed: {result.get('error')}")
+
+            # Default: call tool with provided args
+            try:
+                return tool_fn(**action_args)
+            except TypeError as e:
+                return {'error': str(e)}
+
+        # Iterate trail entries and render controls
+        for idx, entry in enumerate(list(st.session_state['agent_trail'])):
+            with st.container():
+                st.markdown(f"**[{entry['created_at']}] Instruction:** {entry['instruction']}")
+                plan = entry.get('plan') or {}
+                action = plan.get('action') if isinstance(plan, dict) else None
+                args = plan.get('args') if isinstance(plan, dict) else {}
+                explain = plan.get('explain') if isinstance(plan, dict) else None
+                confirm_flag = plan.get('confirm') if isinstance(plan, dict) else False
+
+                if explain:
+                    st.markdown(f"*Explanation:* {explain}")
+                st.json(plan)
+
+                # Inline action buttons: Confirm (for mutating) and Execute
+                cols = st.columns([1,1,6])
+                with cols[0]:
+                    if confirm_flag or (action in mutating_tools):
+                        if st.button("Confirm", key=f"confirm_{entry['id']}"):
+                            entry['status'] = 'confirmed'
+                            # persist change
+                            for t in st.session_state['agent_trail']:
+                                if t['id'] == entry['id']:
+                                    t['status'] = 'confirmed'
+                                    break
+                            st.rerun()
+                with cols[1]:
+                    # Only allow execution if not already executed. If mutating, require confirmed state.
+                    allowed = True
+                    if action in mutating_tools and entry.get('status') != 'confirmed':
+                        allowed = False
+                    if st.button("Execute", key=f"exec_{entry['id']}"):
+                        if not action:
+                            # No tool to call; treat as a user message
+                            entry['status'] = 'done'
+                            entry['result'] = {'message': args.get('message') if isinstance(args, dict) else str(plan)}
                         else:
-                            st.session_state['agent_last'] = {'action': action, 'result': result}
-                            st.success("Action executed. See result below.")
-                    # Clear execute request state so the confirmation widget is hidden on next render
-                    st.session_state['agent_execute_requested'] = False
-            else:
-                # Non-mutating: execute immediately when requested
-                with st.spinner("Executing..."):
-                    result = _prepare_and_call_tool(action, args)
-                    if result and isinstance(result, dict) and result.get('error'):
-                        st.session_state['agent_last'] = {'action': action, 'error': result.get('error')}
-                        st.error(f"Execution failed: {result.get('error')}")
-                    else:
-                        st.session_state['agent_last'] = {'action': action, 'result': result}
-                        st.success("Action executed. See result below.")
-                st.session_state['agent_execute_requested'] = False
+                            if not allowed:
+                                push_flash('Please confirm the mutating action before executing.', level='warning')
+                            else:
+                                with st.spinner("Executing..."):
+                                    res = _prepare_and_call_tool(action, args or {})
+                                    entry['status'] = 'done'
+                                    entry['result'] = res
+                                    # store back into session trail
+                                    for t in st.session_state['agent_trail']:
+                                        if t['id'] == entry['id']:
+                                            t.update(entry)
+                                            break
+                                    st.rerun()
+                with cols[2]:
+                    if entry.get('status') == 'done':
+                        st.markdown("**Result:**")
+                        st.json(entry.get('result'))
 
         if 'agent_plan' in st.session_state:
             st.subheader("Planned action")

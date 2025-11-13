@@ -34,13 +34,35 @@ class Agent:
         self.model = model or os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo')
 
     def _build_prompt(self, instruction: str) -> str:
+        # Build a verbose system prompt describing the agent's responsibilities and the
+        # JSON output contract. Keep the prompt explicit so the model plans safely and
+        # includes optional explanatory/context fields the UI can display.
         tool_list = ', '.join(sorted(self.tools.keys())) or 'none'
         return (
-            f"You are an assistant that can call tools. Available tools: {tool_list}.\n"
-            "When you want to use a tool, output ONLY a single-line valid JSON object with keys: 'action' and 'args'.\n"
-            "action must be the tool name. args must be an object with parameters.\n"
-            "If you want to just reply to the user without calling a tool, return action: null and a string in args.message.\n"
-            f"Instruction: {instruction}\nJSON:"
+            "You are an autonomous assistant integrated into a task management application.\n"
+            "You have access to a set of tools which perform actions in the application.\n"
+            f"Available tools: {tool_list}.\n\n"
+            "OUTPUT CONTRACT (strict JSON):\n"
+            "When you decide on a next step, output ONLY a single JSON object (no surrounding text)\n"
+            "matching the following schema: {\n"
+            "  \"action\": string | null,          // the tool name to call, or null to only reply\n"
+            "  \"args\": object,                  // key/value parameters to pass to the tool (may be {}),\n"
+            "  \"explain\": string (optional),    // short human-readable explanation of your plan,\n"
+            "  \"confirm\": boolean (optional)    // true if the action is mutating and requires user confirmation\n"
+            "}\n\n"
+            "Rules:\n"
+            "- If you do not want to call a tool, set \"action\": null and provide a human message in \"args.message\".\n"
+            "- Avoid side effects unless the requested action is explicit. If the action will change state (create/publish/schedule), set \"confirm\": true to indicate the UI should ask the user to confirm.\n"
+            "- Keep \"args\" minimal and use clear parameter names. Use integers for numeric counts like max_subtasks.\n"
+            "- If a numeric parameter (e.g., number of subtasks) is implied by the instruction but missing from args, include it when you can, e.g. \"max_subtasks\": 4.\n\n"
+            "Examples:\n"
+            "1) Plan-only reply (no tool call):\n"
+            "{\"action\": null, \"args\": {\"message\": \"I recommend creating a Work titled 'Birthday Party' with 4 subtasks.\"}, \"explain\": \"Outline and recommended subtasks\" }\n\n"
+            "2) Tool call that needs confirmation:\n"
+            "{\"action\": \"publish_work\", \"args\": {\"work_id\": 42}, \"explain\": \"Publish work and notify stakeholders\", \"confirm\": true}\n\n"
+            "3) Create work using a natural 'task' field and a max_subtasks hint:\n"
+            "{\"action\": \"create_work\", \"args\": {\"task\": \"Plan a team offsite\", \"max_subtasks\": 5}, \"explain\": \"Create a work item and generate subtasks\" }\n\n"
+            f"Instruction: {instruction}\n\nPlease output the JSON now."
         )
 
     def plan_instruction(self, instruction: str) -> Dict[str, Any]:
