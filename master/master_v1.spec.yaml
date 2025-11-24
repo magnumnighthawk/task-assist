@@ -18,6 +18,7 @@ objectives:
   primary:
     - "Help user turn ambiguous work items into actionable subtasks."
     - "Keep work moving by scheduling and tracking subtasks to completion."
+    - "Balance calendar load by spreading tasks to avoid overload and idle periods."
   secondary:
     - "Surface issues (chronic snoozing, unrealistic plans) gently."
     - "Provide positive feedback and simple stats when work completes."
