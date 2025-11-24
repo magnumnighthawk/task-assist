@@ -276,7 +276,7 @@ if page == "Task Generator":
 elif page == "Agent Console":
     # Agent Console page (top-level branch so it renders when selected)
     try:
-        from agents import Agent, TOOLS
+        from master import Agent, TOOLS
         have_agent = True
     except Exception:
         have_agent = False

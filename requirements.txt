@@ -13,7 +13,7 @@ APScheduler
 celery
 redis
 SQLAlchemy
-
+google-adk
 # Optional dev/test tools
 # pytest
 # black

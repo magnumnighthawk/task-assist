@@ -4,4 +4,3 @@ celery: celery -A celery_app worker --loglevel=info
 schedule: python schedule.py
 slack: python slack_interactive.py
 redis: redis-server
-agent: python -m agents.server

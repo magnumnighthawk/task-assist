@@ -3,7 +3,7 @@
 Each tool is a simple function accepting keyword args and returning JSON-serializable results.
 Keep wrappers minimal and side-effecting where appropriate (e.g., creating work, publishing, sending notifications).
 """
-from typing import Any, Dict
+from typing import Any, Dict, List
 import logging
 import os
 from db import get_db, create_work, publish_work, get_work, get_tasks_by_work
@@ -14,21 +14,62 @@ logger = logging.getLogger('agent.tools')
 
 
 def tool_generate_subtasks(task_description: str, max_subtasks: int = 5) -> Dict[str, Any]:
+    """
+    Generate subtasks for a given task description.
+    Args:
+        task_description (str): Description of the main task to decompose.
+        max_subtasks (int, optional): Maximum number of subtasks to generate (default: 5).
+    Example:
+        tool_generate_subtasks(task_description="Prepare quarterly report", max_subtasks=5)
+    Response:
+        {
+            "subtasks": ["Collect data", "Analyze trends", ...]
+        }
+    """
     res = generate_subtasks(task_description, max_subtasks=max_subtasks)
     return res
 
 
-def tool_create_work(title: str, description: str = '', tasks: list = None, status: str = 'Draft') -> Dict[str, Any]:
+def tool_create_work(title: str, description: str = '', tasks: List[str] = [], status: str = 'Draft') -> Dict[str, Any]:
+    """
+    Create work item and insert into the database.
+    Args:
+        title (str): Title of the work item.
+        description (str, optional): Detailed description of the work.
+        tasks (list, optional): List of initial tasks for the work.
+        status (str, optional): Initial status (default: 'Draft').
+    Example:
+        tool_create_work(title="Build dashboard", description="Create a dashboard for Q4 metrics", tasks=["Design UI", "Connect database"], status="Draft")
+    Response:
+        {
+            "id": 123,
+            "title": "Build dashboard"
+        }
+    """
     db_gen = get_db()
     db = next(db_gen)
     try:
-        work = create_work(db, title=title, description=description, tasks=tasks or [], status=status)
+        # Convert list of strings to list of dicts with 'title' key
+        task_dicts = [{'title': t} for t in tasks] if tasks else []
+        work = create_work(db, title=title, description=description, tasks=task_dicts, status=status)
         return {'id': work.id, 'title': work.title}
     finally:
         db.close()
 
 
 def tool_publish_work(work_id: int) -> Dict[str, Any]:
+    """
+    Publish a work item and send notifications.
+    Args:
+        work_id (int): ID of the work item to publish.
+    Example:
+        tool_publish_work(work_id=123)
+    Response:
+        {
+            "published": True,
+            "work_id": 123
+        }
+    """
     db_gen = get_db()
     db = next(db_gen)
     try:
@@ -57,6 +98,23 @@ def tool_publish_work(work_id: int) -> Dict[str, Any]:
 
 
 def tool_get_work(work_id: int) -> Dict[str, Any]:
+    """
+    Get details of a work item by ID.
+    Args:
+        work_id (int): ID of the work item to retrieve.
+    Example:
+        tool_get_work(work_id=123)
+    Response:
+        {
+            "id": 123,
+            "title": "Build dashboard",
+            "description": "Create a dashboard for Q4 metrics",
+            "status": "Draft",
+            "tasks": [
+                {"id": 1, "title": "Design UI", "status": "Pending", "due_date": "2025-11-22"}
+            ]
+        }
+    """
     db_gen = get_db()
     db = next(db_gen)
     try:
@@ -72,7 +130,18 @@ def tool_get_work(work_id: int) -> Dict[str, Any]:
 
 
 def tool_send_slack_message(text: str) -> Dict[str, Any]:
-    """Send a plain Slack message using ReminderAgent's webhook if available."""
+    """
+    Send a slack notification message via configured webhook.
+    Args:
+        text (str): Message text to send to Slack.
+    Example:
+        tool_send_slack_message(text="Hello team, the dashboard is live!")
+    Response:
+        {
+            "status_code": 200,
+            "body": "ok"
+        }
+    """
     try:
         agent = ReminderAgent()
         webhook = getattr(agent, 'slack_webhook_url', None)
@@ -88,9 +157,16 @@ def tool_send_slack_message(text: str) -> Dict[str, Any]:
 
 
 def tool_schedule_task_to_calendar(task_id: int) -> Dict[str, Any]:
-    """Create a Google Task (calendar entry) for a given Task id using ReminderAgent.
-
-    Returns event metadata or an error.
+    """
+    Schedule a task in Google Calendar.
+    Args:
+        task_id (int): ID of the task to schedule in Google Calendar.
+    Example:
+        tool_schedule_task_to_calendar(task_id=1)
+    Response:
+        {
+            "event": {"id": "abc123", "summary": "Design UI", ...}
+        }
     """
     try:
         from db import get_db, Task
@@ -113,7 +189,18 @@ def tool_schedule_task_to_calendar(task_id: int) -> Dict[str, Any]:
 
 
 def tool_queue_celery_task(task_id: int) -> Dict[str, Any]:
-    """Queue the `async_assign_task` Celery job for a task id if Celery is available."""
+    """
+    Queue a task for asynchronous assignment using Celery.
+    Args:
+        task_id (int): ID of the task to queue for asynchronous assignment.
+    Example:
+        tool_queue_celery_task(task_id=1)
+    Response:
+        {
+            "queued": True,
+            "task_id": 1
+        }
+    """
     try:
         from celery_app import async_assign_task
         from db import get_db, Task

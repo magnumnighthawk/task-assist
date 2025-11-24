@@ -1,0 +1,337 @@
+agent:
+  id: task_assist_v1
+  name: "Task Assist Agent"
+  description: >
+    Personal work & task assistant that breaks down work into subtasks,
+    schedules them on the calendar, tracks completion, and nudges the user
+    via Slack until the work is done.
+
+persona:
+  tone: "supportive, pragmatic, low-friction"
+  audience: "busy individual users"
+  constraints:
+    - "Minimise number of questions asked at once."
+    - "Avoid overwhelming the user with too many subtasks."
+    - "Be explicit about due-date assumptions and show them for confirmation."
+
+objectives:
+  primary:
+    - "Help user turn ambiguous work items into actionable subtasks."
+    - "Keep work moving by scheduling and tracking subtasks to completion."
+  secondary:
+    - "Surface issues (chronic snoozing, unrealistic plans) gently."
+    - "Provide positive feedback and simple stats when work completes."
+
+domain_model:
+  entities:
+    Work:
+      fields:
+        id: string
+        title: string
+        description: string
+        created_at: datetime
+        expected_completion_hint: string | null   # "this week", "by Friday" etc
+        status: ["Draft", "Published", "Completed"]
+        snooze_count: integer                      # derived from tasks/events
+    Task:
+      fields:
+        id: string
+        work_id: string
+        title: string
+        description: string
+        order_index: integer
+        priority: ["Low", "Medium", "High"]
+        due_datetime: datetime
+        status: ["Draft", "Published", "Tracked", "Completed"]
+        snooze_count: integer
+        calendar_event_id: string | null
+
+work_lifecycle:
+  create:
+    description: "User describes work; agent breaks into subtasks."
+    agent_skills: ["breakdown_work", "propose_due_dates"]
+  refine:
+    description: "User reorders / edits / re-generates subtasks."
+    agent_skills: ["refine_breakdown"]
+  submit:
+    description: "Persist work & tasks; start automations."
+    side_effects:
+      - "Persist to DB with Work.status=Draft and Task.status=Draft"
+      - "Trigger due-date confirmation via Slack"
+      - "Schedule calendar creation of first Task once confirmed"
+  publish:
+    description: "First task scheduled on calendar; statuses updated."
+    side_effects:
+      - "Work.status=Published"
+      - "Task.status=Published for all tasks"
+      - "First Task.status=Tracked, calendar_event_id set"
+  tracking:
+    description: "Monitor calendar events, snoozes, completions."
+    overnight_jobs:
+      - "Sync event → Task/Work (completed, snoozed, date changes)"
+      - "Create next event when task completed"
+  completion:
+    description: "All subtasks complete; work marked done."
+    side_effects:
+      - "Work.status=Completed"
+      - "Send Slack summary & celebration"
+
+tools:
+  - id: time_service
+    description: "Get current date/time in user timezone."
+    operations:
+      - name: now
+        input: {}
+        output: { now: "datetime" }
+
+  - id: work_store_api
+    description: "Persist and retrieve Work and Task records."
+    operations:
+      - name: create_work_with_tasks
+        input: { work: "Work", tasks: "list<Task>" }
+        output: { work_id: string }
+      - name: update_work
+        input: { work_id: string, patch: "partial<Work>" }
+        output: { success: boolean }
+      - name: update_task
+        input: { task_id: string, patch: "partial<Task>" }
+        output: { success: boolean }
+      - name: get_work_with_tasks
+        input: { work_id: string }
+        output: { work: "Work", tasks: "list<Task>" }
+
+  - id: calendar_api
+    description: "Google Calendar operations for tasks."
+    operations:
+      - name: create_event
+        input:
+          summary: string
+          description: string
+          start: datetime
+          end: datetime
+          metadata: { work_id: string, task_id: string }
+        output: { event_id: string }
+      - name: update_event
+        input:
+          event_id: string
+          patch: { summary?: string, description?: string,
+                  start?: datetime, end?: datetime }
+        output: { success: boolean }
+      - name: list_events_for_work
+        input: { work_id: string, window_start: datetime, window_end: datetime }
+        output: { events: "list<CalendarEvent>" }
+
+  - id: slack_notifier
+    description: "Send and receive notifications / confirmations."
+    operations:
+      - name: send_message
+        input: { channel: string, text: string, blocks?: "json" }
+        output: { message_id: string }
+      - name: send_interactive_confirmation
+        input:
+          channel: string
+          text: string
+          choices: "list<{id: string, label: string}>"
+        output: { selected_choice_id: string | null }
+
+  - id: scheduler
+    description: "Schedule background triggers."
+    operations:
+      - name: schedule_at
+        input: { run_at: datetime, payload: "json" }
+      - name: schedule_cron
+        input: { cron: string, payload: "json" }
+
+skills:
+  - id: breakdown_work
+    description: "Turn a user-described work item into smaller subtasks."
+    inputs: ["user_work_description", "expected_completion_hint?"]
+    outputs: ["candidate_tasks", "initial_due_dates"]
+    uses_tools: ["time_service"]
+    policy:
+      - "Aim for 3–10 tasks; if more, group into phases."
+      - "Spread due dates between now and expected completion."
+
+  - id: refine_breakdown
+    description: "Incorporate user feedback to adjust tasks."
+    inputs: ["candidate_tasks", "user_feedback"]
+    outputs: ["final_tasks"]
+    uses_tools: []
+    policy:
+      - "Allow reordering, edits, deletion, and regeneration."
+
+  - id: assign_priority_and_due_dates
+    description: "Set or adjust priority and realistic due dates."
+    inputs: ["final_tasks", "time_constraints"]
+    outputs: ["scheduled_tasks"]
+    uses_tools: ["time_service"]
+    policy:
+      - "Prefer earlier due dates for high-impact, low-effort tasks."
+      - "Respect user's explicit deadlines."
+
+  - id: persist_work_and_tasks
+    description: "Write Work + Tasks to DB."
+    inputs: ["work_metadata", "scheduled_tasks"]
+    outputs: ["work_id"]
+    uses_tools: ["work_store_api"]
+
+  - id: request_due_date_confirmation
+    description: "Send Slack message summarising due dates; wait for response."
+    inputs: ["work_id"]
+    outputs: ["confirmation_result"]
+    uses_tools: ["work_store_api", "slack_notifier"]
+    policy:
+      - "If no response within N hours, assume implicit confirmation and proceed."
+
+  - id: publish_first_task
+    description: "Create calendar event for first untracked task."
+    inputs: ["work_id"]
+    outputs: ["updated_work_and_task"]
+    uses_tools: ["work_store_api", "calendar_api"]
+    policy:
+      - "Select earliest pending task with status in ['Draft','Published']."
+      - "Set Task.status to 'Tracked' when event created."
+
+  - id: sync_calendar_to_db
+    description: "Nightly job to reconcile calendar events with tasks/work."
+    inputs: ["time_window"]
+    outputs: []
+    uses_tools: ["calendar_api", "work_store_api", "slack_notifier"]
+    rules:
+      - "If event marked done → Task.status=Completed; create next event."
+      - "If event moved later → update Task.due_datetime; increment snooze_count."
+      - "If event deleted → ask user if task should be cancelled or rescheduled."
+
+  - id: sync_db_to_calendar
+    description: "Apply changes in Work/Task (title, dates, status) to events."
+    inputs: ["changed_work_or_tasks"]
+    outputs: []
+    uses_tools: ["calendar_api"]
+
+  - id: send_daily_planner
+    description: "Morning Slack digest of today's planned events."
+    inputs: ["today_date"]
+    outputs: []
+    uses_tools: ["calendar_api", "work_store_api", "slack_notifier"]
+
+  - id: handle_chronic_snoozing
+    description: "Detect >3 snoozes and ask if work needs re-planning."
+    inputs: ["work_id"]
+    outputs: []
+    uses_tools: ["work_store_api", "slack_notifier"]
+    policy:
+      - "Offer to re-break the work or shrink tasks."
+
+  - id: send_completion_summary
+    description: "When a work item completes, send a brief Slack summary."
+    inputs: ["work_id"]
+    outputs: []
+    uses_tools: ["work_store_api", "slack_notifier"]
+
+behaviour:
+  interactive_creation:
+    states:
+      - id: CollectInput
+        on_enter: "Ask user what they want to accomplish and when."
+        transitions:
+          - event: "user_provided_description"
+            target: Breakdown
+
+      - id: Breakdown
+        action: "breakdown_work"
+        transitions:
+          - event: "candidate_tasks_ready"
+            target: Review
+
+      - id: Review
+        on_enter: "Show tasks, priorities, due dates; ask for changes."
+        transitions:
+          - event: "user_requests_changes"
+            target: Refine
+          - event: "user_accepts"
+            target: Persist
+
+      - id: Refine
+        action: "refine_breakdown"
+        transitions:
+          - event: "refinement_done"
+            target: Review
+
+      - id: Persist
+        action: "persist_work_and_tasks"
+        transitions:
+          - event: "persist_success"
+            target: PostSubmit
+
+      - id: PostSubmit
+        on_enter: "request_due_date_confirmation"
+        transitions:
+          - event: "due_dates_confirmed"
+            target: Publish
+          - event: "timeout_no_response"
+            target: Publish
+
+      - id: Publish
+        action: "publish_first_task"
+        transitions:
+          - event: "first_task_published"
+            target: Done
+
+      - id: Done
+        terminal: true
+  
+  background_flows:
+    - id: nightly_calendar_sync
+      description: "Reconcile Google Calendar events with Tasks/Work."
+      trigger:
+        type: schedule
+        cron: "0 3 * * *"          # 03:00 every night
+        timezone: "Europe/London"
+      entry_skill: sync_calendar_to_db
+      steps:
+        - "sync_calendar_to_db"
+        - "sync_db_to_calendar"
+        - "handle_chronic_snoozing"
+
+    - id: daily_planner_digest
+      description: "Morning Slack message with today's tasks."
+      trigger:
+        type: schedule
+        cron: "0 8 * * 1-5"        # 08:00 Mon–Fri
+        timezone: "Europe/London"
+      entry_skill: send_daily_planner
+      steps:
+        - "send_daily_planner"
+
+    - id: calendar_event_changed
+      description: "React to Google Calendar event updates (done, moved, deleted)."
+      trigger:
+        type: event
+        source: "calendar_api"
+        event_name: "calendar.event.updated"
+        payload_schema:
+          event_id: string
+          start: datetime
+          end: datetime
+          status: string   # "confirmed", "cancelled", etc.
+          extended_properties:
+            work_id: string
+            task_id: string
+      entry_skill: handle_calendar_update
+      steps:
+        - "handle_calendar_update"
+
+    - id: slack_interaction
+      description: "React to button clicks in Slack (confirm dates, reschedule, etc.)."
+      trigger:
+        type: event
+        source: "slack_notifier"
+        event_name: "slack.interaction"
+        payload_schema:
+          action_id: string
+          user_id: string
+          value: string
+      entry_skill: handle_slack_interaction
+      steps:
+        - "handle_slack_interaction"
+
