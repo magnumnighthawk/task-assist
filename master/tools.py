@@ -3,7 +3,7 @@
 Each tool is a simple function accepting keyword args and returning JSON-serializable results.
 Keep wrappers minimal and side-effecting where appropriate (e.g., creating work, publishing, sending notifications).
 """
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import logging
 import os
 from db import (
@@ -112,7 +112,7 @@ def tool_create_work(title: str, description: str = '', tasks: List[str] = [], s
         db.close()
 
 
-def tool_create_task(work_id: int, title: str, status: str = 'Draft', due_date: str = None) -> Dict[str, Any]:
+def tool_create_task(work_id: int, title: str, status: str = 'Draft', due_date: Optional[str] = None) -> Dict[str, Any]:
     """Create a single task under an existing work.
     Args:
         work_id (int): Parent work ID.
