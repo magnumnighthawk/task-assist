@@ -1,26 +1,14 @@
 """Tool wrappers for Agent to call into the application.
 
-Each tool is a simple function accepting keyword args and returning JSON-serializable results.
-Keep wrappers minimal and side-effecting where appropriate (e.g., creating work, publishing, sending notifications).
+Refactored to use agent_api facade for clean, agent-friendly operations.
+Each tool delegates to agent_api functions with minimal logic.
 """
 from typing import Any, Dict, List, Optional
 import logging
-import os
-from db import (
-    get_db,
-    create_work,
-    publish_work,
-    get_work,
-    get_tasks_by_work,
-    complete_work,
-    update_task_status,
-    increment_task_snooze,
-    mark_task_notified,
-    mark_work_notified,
-    create_task,
-)
+from datetime import datetime
+
 from generate import generate_subtasks
-from reminder import ReminderAgent
+import agent_api
 
 logger = logging.getLogger('agent.tools')
 
@@ -85,418 +73,458 @@ def tool_refine_subtasks(original_subtasks: List[str], feedback: str) -> Dict[st
     return {"refined_subtasks": refined}
 
 
-def tool_create_work(title: str, description: str = '', tasks: List[str] = [], status: str = 'Draft') -> Dict[str, Any]:
-    """
-    Create work item and insert into the database.
+def tool_create_work(title: str, description: str = '', tasks: List[str] = [], status: str = 'Draft', auto_due_dates: bool = False) -> Dict[str, Any]:
+    """Create work item with optional tasks.
+    
     Args:
-        title (str): Title of the work item.
-        description (str, optional): Detailed description of the work.
-        tasks (list, optional): List of initial tasks for the work.
-        status (str, optional): Initial status (default: 'Draft').
-    Example:
-        tool_create_work(title="Build dashboard", description="Create a dashboard for Q4 metrics", tasks=["Design UI", "Connect database"], status="Draft")
-    Response:
-        {
-            "id": 123,
-            "title": "Build dashboard"
-        }
+        title: Work title
+        description: Work description
+        tasks: List of task titles
+        status: Initial status (default: 'Draft')
+        auto_due_dates: Whether to auto-assign due dates with spacing
+        
+    Returns:
+        {"id": work_id, "title": work_title}
     """
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        # Convert list of strings to list of dicts with 'title' key
-        task_dicts = [{'title': t} for t in tasks] if tasks else []
-        work = create_work(db, title=title, description=description, tasks=task_dicts, status=status)
-        return {'id': work.id, 'title': work.title}
-    finally:
-        db.close()
+    work_id = agent_api.create_work_with_tasks(title, description, tasks, auto_due_dates)
+    if work_id:
+        return {'id': work_id, 'title': title}
+    return {'error': 'failed to create work'}
 
 
-def tool_create_task(work_id: int, title: str, status: str = 'Draft', due_date: Optional[str] = None) -> Dict[str, Any]:
+def tool_create_task(work_id: int, title: str, status: str = 'Pending', due_date: Optional[str] = None) -> Dict[str, Any]:
     """Create a single task under an existing work.
+    
     Args:
-        work_id (int): Parent work ID.
-        title (str): Task title.
-        status (str): Initial status (default Draft).
-        due_date (str): ISO date/time string (optional).
-    Response: {"task_id": <int>, "title": <str>}
+        work_id: Parent work ID
+        title: Task title
+        status: Initial status (default Pending)
+        due_date: ISO date/time string (optional)
+        
+    Returns:
+        {"task_id": id, "title": title, "status": status, "due_date": date_str}
     """
-    from datetime import datetime
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        parsed_due = None
-        if due_date:
-            try:
-                parsed_due = datetime.fromisoformat(due_date)
-            except Exception:
-                parsed_due = None
-        task = create_task(db, work_id=work_id, title=title, status=status, due_date=parsed_due)
-        return {"task_id": task.id, "title": task.title, "status": task.status, "due_date": str(task.due_date)}
-    finally:
-        db.close()
-
-
-def tool_publish_work(work_id: int) -> Dict[str, Any]:
-    """
-    Publish a work item and send notifications.
-    Args:
-        work_id (int): ID of the work item to publish.
-    Example:
-        tool_publish_work(work_id=123)
-    Response:
-        {
-            "published": True,
-            "work_id": 123
-        }
-    """
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        work = publish_work(db, work_id)
-        # Use ReminderAgent to send notification and potentially create calendar tasks
+    from core.storage import create_task
+    from core.task import TaskStatus
+    
+    parsed_due = None
+    if due_date:
         try:
-            agent = ReminderAgent()
-            try:
-                # Use the agent helper if the Slack webhook is configured
-                if getattr(agent, 'slack_webhook_url', None):
-                    agent.send_publish_work_notification(work, agent.slack_webhook_url)
-                else:
-                    # Fallback to slack_interactive helper if available
-                    try:
-                        from slack_interactive import send_publish_work_notification as _send_pub
-                        _send_pub(work, os.getenv('SLACK_WEBHOOK_URL'))
-                    except Exception:
-                        logger.debug('No slack helper available for publish notification')
-            except Exception:
-                logger.exception('Failed to send publish notification via agent')
+            parsed_due = datetime.fromisoformat(due_date)
         except Exception:
-            logger.exception('Failed to initialize ReminderAgent for publish notification')
-        return {'published': True, 'work_id': work.id}
-    finally:
-        db.close()
+            pass
+    
+    task_status = TaskStatus.from_string(status)
+    task = create_task(work_id, title, task_status, parsed_due)
+    
+    if task:
+        return {
+            "task_id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "due_date": task.due_date.isoformat() if task.due_date else None
+        }
+    return {'error': 'failed to create task'}
+
+
+def tool_publish_work(work_id: int, schedule_first_task: bool = True) -> Dict[str, Any]:
+    """Publish a work item and send notifications.
+    
+    Args:
+        work_id: Work item ID
+        schedule_first_task: Whether to schedule first task to calendar
+        
+    Returns:
+        {"published": True, "work_id": id}
+    """
+    result = agent_api.publish_work_flow(work_id, schedule_first_task)
+    if result:
+        return {'published': True, 'work_id': work_id}
+    return {'error': 'failed to publish work'}
 
 
 def tool_send_due_date_confirmation(work_id: int) -> Dict[str, Any]:
     """Trigger interactive Slack due-date confirmation for a work.
-    Response: {"sent": True, "work_id": id}
+    
+    Args:
+        work_id: Work item ID
+        
+    Returns:
+        {"sent": True, "work_id": id}
     """
-    try:
-        from reminder import ReminderAgent
-        from db import get_db, Work
-        from sqlalchemy.orm import joinedload
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
-            work = db.query(Work).options(joinedload(Work.tasks)).filter(Work.id == work_id).first()
-        finally:
-            db.close()
-        if not work:
-            return {"error": "work not found"}
-        agent = ReminderAgent()
-        agent.send_interactive_work_notification(work)
+    result = agent_api.send_interactive_due_date_request(work_id)
+    if result:
         return {"sent": True, "work_id": work_id}
-    except Exception as e:
-        logger.exception('Failed to send due date confirmation')
-        return {"error": str(e)}
+    return {"error": "failed to send confirmation"}
 
 
 def tool_schedule_first_untracked_task(work_id: int) -> Dict[str, Any]:
-    """Schedule the first task without 'Tracked' or 'Completed' status for a work.
-    Sets task status to Tracked after scheduling. Returns event info.
+    """Schedule the first incomplete task for a work.
+    
+    Args:
+        work_id: Work item ID
+        
+    Returns:
+        {"scheduled_task_id": id}
     """
-    from db import get_db, Task
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        tasks = db.query(Task).filter(Task.work_id == work_id).order_by(Task.id.asc()).all()
-        target = next((t for t in tasks if t.status not in ('Tracked', 'Completed')), None)
-        if not target:
-            return {"error": "no schedulable task"}
-        agent = ReminderAgent()
-        if not getattr(agent, 'service', None) and not getattr(agent, 'creds', None):
-            return {"error": "google credentials not configured"}
-        event = agent.create_event_for_task(target, target.work.title if target.work else 'Work')
-        update_task_status(db, target.id, 'Tracked')
-        return {"scheduled_task_id": target.id, "event": event}
-    finally:
-        db.close()
+    from core.storage import list_tasks, update_task_status
+    from core.task import TaskStatus
+    
+    tasks = list_tasks(work_id=work_id, exclude_completed=True)
+    if not tasks:
+        return {"error": "no schedulable task"}
+    
+    target = tasks[0]
+    update_task_status(target.id, TaskStatus.TRACKED)
+    result = agent_api.schedule_task_to_calendar(target.id)
+    
+    if result:
+        return {"scheduled_task_id": target.id}
+    return {"error": "failed to schedule task"}
 
 
 def tool_update_task_status(task_id: int, status: str) -> Dict[str, Any]:
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        task = update_task_status(db, task_id, status)
-        if not task:
-            return {"error": "task not found"}
+    """Update task status.
+    
+    Args:
+        task_id: Task ID
+        status: New status
+        
+    Returns:
+        {"task_id": id, "status": status}
+    """
+    from core.storage import update_task_status
+    from core.task import TaskStatus
+    
+    task_status = TaskStatus.from_string(status)
+    task = update_task_status(task_id, task_status)
+    
+    if task:
         return {"task_id": task.id, "status": task.status}
-    finally:
-        db.close()
+    return {"error": "task not found"}
 
 
 def tool_complete_task_and_schedule_next(task_id: int) -> Dict[str, Any]:
-    """Complete a task and schedule the next pending one if any."""
-    from db import Task
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return {"error": "task not found"}
-        agent = ReminderAgent()
-        agent.complete_task_and_schedule_next(task, task.work)
+    """Complete a task and schedule the next pending one if any.
+    
+    Args:
+        task_id: Task ID to complete
+        
+    Returns:
+        {"completed_task_id": id, "work_id": work_id}
+    """
+    from core.storage import get_task_by_id
+    
+    task = get_task_by_id(task_id)
+    if not task:
+        return {"error": "task not found"}
+    
+    result = agent_api.complete_task_flow(task_id)
+    if result:
         return {"completed_task_id": task_id, "work_id": task.work_id}
-    finally:
-        db.close()
+    return {"error": "failed to complete task"}
 
 
 def tool_snooze_task(task_id: int, days: int = 1) -> Dict[str, Any]:
-    from db import Task
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return {"error": "task not found"}
-        agent = ReminderAgent()
-        agent.snooze_task(task, task.work, days=days)
-        return {"task_id": task_id, "snoozed_days": days, "snooze_count": task.snooze_count}
-    finally:
-        db.close()
+    """Snooze a task by moving its due date forward.
+    
+    Args:
+        task_id: Task ID
+        days: Number of days to snooze
+        
+    Returns:
+        {"task_id": id, "snoozed_days": days, "snooze_count": count}
+    """
+    from core.storage import get_task_by_id
+    
+    result = agent_api.snooze_task(task_id, days)
+    if result:
+        task = get_task_by_id(task_id)
+        return {
+            "task_id": task_id,
+            "snoozed_days": days,
+            "snooze_count": task.snooze_count if task else 0
+        }
+    return {"error": "failed to snooze task"}
 
 
 def tool_reschedule_task_event(task_id: int, new_due: str) -> Dict[str, Any]:
-    """Reschedule a tracked task event to a new due datetime (ISO)."""
-    from datetime import datetime, timedelta
-    from db import Task
-    db_gen = get_db()
-    db = next(db_gen)
+    """Reschedule a task to a new due datetime.
+    
+    Args:
+        task_id: Task ID
+        new_due: ISO datetime string
+        
+    Returns:
+        {"task_id": id, "new_due": date_str}
+    """
+    from core.storage import get_task_by_id
+    
     try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task or not task.calendar_event_id:
-            return {"error": "task or event not found"}
-        try:
-            parsed_due = datetime.fromisoformat(new_due)
-        except Exception:
-            return {"error": "invalid new_due format"}
-        agent = ReminderAgent()
-        start_iso = parsed_due.isoformat()
-        end_iso = (parsed_due + timedelta(hours=1)).isoformat()
-        agent.reschedule_event(task.calendar_event_id, start_iso, end_iso)
-        task.due_date = parsed_due
-        db.commit()
-        return {"task_id": task_id, "new_due": str(task.due_date)}
-    finally:
-        db.close()
+        parsed_due = datetime.fromisoformat(new_due)
+    except Exception:
+        return {"error": "invalid new_due format"}
+    
+    result = agent_api.set_task_due_date(task_id, parsed_due, source="reschedule")
+    if result:
+        task = get_task_by_id(task_id)
+        return {
+            "task_id": task_id,
+            "new_due": task.due_date.isoformat() if task and task.due_date else new_due
+        }
+    return {"error": "failed to reschedule task"}
 
 
 def tool_list_upcoming_events(max_results: int = 10) -> Dict[str, Any]:
+    """List upcoming tasks from Google Tasks.
+    
+    Args:
+        max_results: Maximum number of tasks to return
+        
+    Returns:
+        {"upcoming": [task_dicts]}
+    """
     try:
-        agent = ReminderAgent()
-        events = agent.list_upcoming_events(max_results=max_results)
-        return {"upcoming": events}
+        events = agent_api.fetch_calendar_tasks()
+        return {"upcoming": events[:max_results]}
     except Exception as e:
         logger.exception('Failed to list upcoming events')
         return {"error": str(e)}
 
 
-def tool_sync_event_update(event_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        agent = ReminderAgent()
-        agent.sync_event_update_to_db(event_id, updates)
-        return {"synced": True, "event_id": event_id}
-    except Exception as e:
-        logger.exception('Failed to sync event update')
-        return {"error": str(e)}
+def tool_sync_event_update(task_id: int) -> Dict[str, Any]:
+    """Sync a task's state from Google Tasks.
+    
+    Args:
+        task_id: Task ID to sync
+        
+    Returns:
+        {"synced": True, "task_id": id}
+    """
+    result = agent_api.sync_task_from_calendar(task_id)
+    if result:
+        return {"synced": True, "task_id": task_id}
+    return {"error": "failed to sync task"}
 
 
 def tool_notify_task_completed(task_id: int) -> Dict[str, Any]:
-    from db import Task
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            return {"error": "task not found"}
-        agent = ReminderAgent()
-        agent.notify_task_completed(task, task.work)
-        mark_task_notified(db, task.id)
-        return {"notified_task_id": task_id}
-    finally:
-        db.close()
+    """Send notification that a task was completed.
+    
+    Args:
+        task_id: Task ID
+        
+    Returns:
+        {"notified_task_id": id}
+    """
+    from core.storage import get_task_by_id, get_work_by_id, mark_task_as_notified
+    from core.slack import get_notifier
+    
+    task = get_task_by_id(task_id)
+    if not task:
+        return {"error": "task not found"}
+    
+    work = get_work_by_id(task.work_id, include_tasks=False)
+    if work:
+        notifier = get_notifier()
+        notifier.send_task_completed(task, work)
+        mark_task_as_notified(task_id)
+    
+    return {"notified_task_id": task_id}
 
 
 def tool_notify_work_completed(work_id: int) -> Dict[str, Any]:
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        work = get_work(db, work_id)
-        if not work:
-            return {"error": "work not found"}
-        agent = ReminderAgent()
-        agent.notify_work_completed(work)
-        mark_work_notified(db, work.id)
-        return {"notified_work_id": work_id}
-    finally:
-        db.close()
+    """Send notification that a work was completed.
+    
+    Args:
+        work_id: Work ID
+        
+    Returns:
+        {"notified_work_id": id}
+    """
+    from core.storage import get_work_by_id, mark_work_as_notified
+    from core.slack import get_notifier
+    
+    work = get_work_by_id(work_id, include_tasks=True)
+    if not work:
+        return {"error": "work not found"}
+    
+    notifier = get_notifier()
+    notifier.send_work_completed(work)
+    mark_work_as_notified(work_id)
+    
+    return {"notified_work_id": work_id}
 
 
 def tool_grouped_work_alert(work_id: int, changes: List[str]) -> Dict[str, Any]:
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        work = get_work(db, work_id)
-        if not work:
-            return {"error": "work not found"}
-        agent = ReminderAgent()
-        agent.notify_grouped_alert(work, changes)
-        return {"work_id": work_id, "changes_count": len(changes)}
-    finally:
-        db.close()
+    """Send grouped notification for multiple changes to a work.
+    
+    Args:
+        work_id: Work ID
+        changes: List of change descriptions
+        
+    Returns:
+        {"work_id": id, "changes_count": count}
+    """
+    from core.storage import get_work_by_id
+    from core.slack import get_notifier
+    
+    work = get_work_by_id(work_id, include_tasks=False)
+    if not work:
+        return {"error": "work not found"}
+    
+    notifier = get_notifier()
+    notifier.send_grouped_alert(work, changes)
+    
+    return {"work_id": work_id, "changes_count": len(changes)}
 
 
 def tool_complete_work(work_id: int) -> Dict[str, Any]:
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        work = complete_work(db, work_id)
-        if not work:
-            return {"error": "work not found"}
+    """Mark a work item as completed.
+    
+    Args:
+        work_id: Work ID
+        
+    Returns:
+        {"work_id": id, "status": status}
+    """
+    from core.storage import update_work_status
+    from core.work import WorkStatus
+    
+    work = update_work_status(work_id, WorkStatus.COMPLETED)
+    if work:
         return {"work_id": work.id, "status": work.status}
-    finally:
-        db.close()
+    return {"error": "work not found"}
 
 
 def tool_daily_planner_digest() -> Dict[str, Any]:
+    """Send daily reminder of today's tasks.
+    
+    Returns:
+        {"sent": True}
+    """
     try:
-        agent = ReminderAgent()
-        agent.send_daily_reminder()
-        return {"sent": True}
+        result = agent_api.send_daily_reminder()
+        return {"sent": result}
     except Exception as e:
         logger.exception('Failed daily planner digest')
         return {"error": str(e)}
 
 
 def tool_get_work(work_id: int) -> Dict[str, Any]:
-    """
-    Get details of a work item by ID.
+    """Get detailed information about a work item.
+    
     Args:
-        work_id (int): ID of the work item to retrieve.
-    Example:
-        tool_get_work(work_id=123)
-    Response:
-        {
-            "id": 123,
-            "title": "Build dashboard",
-            "description": "Create a dashboard for Q4 metrics",
-            "status": "Draft",
-            "tasks": [
-                {"id": 1, "title": "Design UI", "status": "Pending", "due_date": "2025-11-22"}
-            ]
-        }
+        work_id: Work item ID
+        
+    Returns:
+        Work dict with id, title, description, status, tasks
     """
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        work = get_work(db, work_id)
-        if not work:
-            return {'error': 'not found'}
-        tasks = []
-        for t in get_tasks_by_work(db, work_id):
-            tasks.append({'id': t.id, 'title': t.title, 'status': t.status, 'due_date': str(t.due_date)})
-        return {'id': work.id, 'title': work.title, 'description': work.description, 'status': work.status, 'tasks': tasks}
-    finally:
-        db.close()
+    result = agent_api.get_work_details(work_id)
+    if result:
+        return result
+    return {'error': 'work not found'}
+
+
+def tool_list_works(status: str = 'all') -> Dict[str, Any]:
+    """List work items by status.
+    
+    Args:
+        status: Status filter - 'draft', 'published', 'completed', 'in_progress', 'all'
+        
+    Returns:
+        {"works": [work_dicts]}
+    """
+    works = agent_api.list_works_by_status(status)
+    return {"works": works}
+
+
+def tool_list_tasks(status: str = 'all', work_id: Optional[int] = None) -> Dict[str, Any]:
+    """List tasks by status.
+    
+    Args:
+        status: Status filter - 'pending', 'published', 'tracked', 'completed', 'all'
+        work_id: Optional work ID filter
+        
+    Returns:
+        {"tasks": [task_dicts]}
+    """
+    tasks = agent_api.list_tasks_by_status(status, work_id)
+    return {"tasks": tasks}
+
+
+def tool_get_today_tasks() -> Dict[str, Any]:
+    """Get all tasks due today.
+    
+    Returns:
+        {"tasks": [task_dicts]}
+    """
+    tasks = agent_api.get_today_tasks_summary()
+    return {"tasks": tasks}
+
+
+def tool_get_overdue_tasks() -> Dict[str, Any]:
+    """Get all overdue tasks.
+    
+    Returns:
+        {"tasks": [task_dicts]}
+    """
+    tasks = agent_api.get_overdue_tasks()
+    return {"tasks": tasks}
 
 
 def tool_send_slack_message(text: str) -> Dict[str, Any]:
-    """
-    Send a slack notification message via configured webhook.
+    """Send a Slack notification message.
+    
     Args:
-        text (str): Message text to send to Slack.
-    Example:
-        tool_send_slack_message(text="Hello team, the dashboard is live!")
-    Response:
-        {
-            "status_code": 200,
-            "body": "ok"
-        }
+        text: Message text
+        
+    Returns:
+        {"sent": True}
     """
-    try:
-        agent = ReminderAgent()
-        webhook = getattr(agent, 'slack_webhook_url', None)
-        if not webhook:
-            return {'error': 'no slack webhook configured'}
-        import requests
-
-        resp = requests.post(webhook, json={'text': text}, timeout=10)
-        return {'status_code': resp.status_code, 'body': resp.text}
-    except Exception as e:
-        logger.exception('Failed to send slack message')
-        return {'error': str(e)}
+    result = agent_api.send_slack_notification(text)
+    return {'sent': result}
 
 
 def tool_schedule_task_to_calendar(task_id: int) -> Dict[str, Any]:
-    """
-    Schedule a task in Google Calendar.
+    """Schedule a task to Google Tasks.
+    
     Args:
-        task_id (int): ID of the task to schedule in Google Calendar.
-    Example:
-        tool_schedule_task_to_calendar(task_id=1)
-    Response:
-        {
-            "event": {"id": "abc123", "summary": "Design UI", ...}
-        }
+        task_id: Task ID
+        
+    Returns:
+        {"scheduled": True, "task_id": id}
     """
-    try:
-        from db import get_db, Task
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
-            t = db.query(Task).filter(Task.id == int(task_id)).first()
-            if not t:
-                return {'error': 'task not found'}
-            agent = ReminderAgent()
-            if not getattr(agent, 'service', None) and not getattr(agent, 'creds', None):
-                return {'error': 'google credentials not configured'}
-            ev = agent.create_event_for_task(t, t.work.title if t.work else 'Work')
-            return {'event': ev}
-        finally:
-            db.close()
-    except Exception as e:
-        logger.exception('Failed to schedule task to calendar')
-        return {'error': str(e)}
+    result = agent_api.schedule_task_to_calendar(task_id)
+    if result:
+        return {'scheduled': True, 'task_id': task_id}
+    return {'error': 'failed to schedule task'}
 
 
 def tool_queue_celery_task(task_id: int) -> Dict[str, Any]:
-    """
-    Queue a task for asynchronous assignment using Celery.
+    """Queue a task for asynchronous processing using Celery.
+    
     Args:
-        task_id (int): ID of the task to queue for asynchronous assignment.
-    Example:
-        tool_queue_celery_task(task_id=1)
-    Response:
-        {
-            "queued": True,
-            "task_id": 1
-        }
+        task_id: Task ID
+        
+    Returns:
+        {"queued": True, "task_id": id}
     """
     try:
         from celery_app import async_assign_task
-        from db import get_db, Task
-
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
-            t = db.query(Task).filter(Task.id == int(task_id)).first()
-            if not t:
-                return {'error': 'task not found'}
-            payload = {"id": t.id, "title": t.title, "status": t.status, "due_date": str(t.due_date)}
-            async_assign_task.delay(payload)
-            return {'queued': True, 'task_id': t.id}
-        finally:
-            db.close()
+        from core.storage import get_task_by_id
+        
+        task = get_task_by_id(task_id)
+        if not task:
+            return {'error': 'task not found'}
+        
+        payload = {
+            "id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "due_date": task.due_date.isoformat() if task.due_date else None
+        }
+        async_assign_task.delay(payload)
+        return {'queued': True, 'task_id': task.id}
     except Exception as e:
         logger.exception('Failed to queue celery task')
         return {'error': str(e)}
@@ -504,26 +532,41 @@ def tool_queue_celery_task(task_id: int) -> Dict[str, Any]:
 
 # Registry of tools the agent can call
 TOOLS = {
+    # Task generation
     'generate_subtasks': tool_generate_subtasks,
     'refine_subtasks': tool_refine_subtasks,
+    
+    # Work management
     'create_work': tool_create_work,
-    'create_task': tool_create_task,
     'publish_work': tool_publish_work,
     'get_work': tool_get_work,
-    'send_slack_message': tool_send_slack_message,
-    'schedule_task_to_calendar': tool_schedule_task_to_calendar,
-    'queue_celery_task': tool_queue_celery_task,
-    'send_due_date_confirmation': tool_send_due_date_confirmation,
-    'schedule_first_untracked_task': tool_schedule_first_untracked_task,
+    'list_works': tool_list_works,
+    'complete_work': tool_complete_work,
+    
+    # Task management
+    'create_task': tool_create_task,
+    'list_tasks': tool_list_tasks,
+    'get_today_tasks': tool_get_today_tasks,
+    'get_overdue_tasks': tool_get_overdue_tasks,
     'update_task_status': tool_update_task_status,
     'complete_task_and_schedule_next': tool_complete_task_and_schedule_next,
     'snooze_task': tool_snooze_task,
     'reschedule_task_event': tool_reschedule_task_event,
+    
+    # Calendar/Google Tasks
+    'schedule_task_to_calendar': tool_schedule_task_to_calendar,
+    'schedule_first_untracked_task': tool_schedule_first_untracked_task,
     'list_upcoming_events': tool_list_upcoming_events,
     'sync_event_update': tool_sync_event_update,
+    
+    # Slack notifications
+    'send_slack_message': tool_send_slack_message,
+    'send_due_date_confirmation': tool_send_due_date_confirmation,
     'notify_task_completed': tool_notify_task_completed,
     'notify_work_completed': tool_notify_work_completed,
     'grouped_work_alert': tool_grouped_work_alert,
-    'complete_work': tool_complete_work,
     'daily_planner_digest': tool_daily_planner_digest,
+    
+    # Celery async
+    'queue_celery_task': tool_queue_celery_task,
 }

@@ -6,6 +6,23 @@ An AI-powered workflow automation tool that streamlines task management through 
 
 Task Assist breaks down complex tasks into actionable subtasks using AI, tracks their progress, and manages reminders with calendar integration. The application leverages asynchronous processing to handle task scheduling and execution efficiently.
 
+## Architecture
+
+The application has been refactored for agent-centric operation with clean domain modules:
+
+- **`core/`**: Domain logic modules
+  - `work.py` / `task.py`: Status enums and lifecycle management
+  - `storage.py`: Database operations with filtering
+  - `slack.py`: Centralized Slack notifications
+  - `tasks_provider.py`: Google Tasks API wrapper
+  - `scheduling.py`: Task scheduling and calendar sync
+  - `due_dates.py`: Due date management
+- **`agent_api.py`**: High-level facade for agent operations
+- **`master/`**: AI agent framework with refactored tools
+- **Web interfaces**: Flask API and Streamlit UI (optional, agent can operate independently)
+
+See [AGENT_API.md](docs/AGENT_API.md) for comprehensive API documentation.
+
 ## Features
 
 - **AI-Powered Task Decomposition**: Breaks down high-level tasks into actionable subtasks with priority levels
