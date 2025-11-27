@@ -55,6 +55,13 @@ work_lifecycle:
   refine:
     description: "User reorders / edits / re-generates subtasks."
     agent_skills: ["refine_breakdown"]
+  confirm_details:
+    description: "User reviews and confirms work details before persistence."
+    agent_skills: ["show_work_summary"]
+    policy:
+      - "ALWAYS ask user to confirm work details before persisting"
+      - "Show: work title, description, task count, tasks with priorities"
+      - "Only proceed to submit after explicit user confirmation"
   submit:
     description: "Persist work & tasks; start automations."
     side_effects:
@@ -231,12 +238,24 @@ behaviour:
           - event: "user_requests_changes"
             target: Refine
           - event: "user_accepts"
-            target: Persist
+            target: ConfirmPersist
 
       - id: Refine
         action: "refine_breakdown"
         transitions:
           - event: "refinement_done"
+            target: Review
+
+      - id: ConfirmPersist
+        on_enter: "Ask user to confirm before persisting work to database."
+        policy:
+          - "ALWAYS get explicit user confirmation before calling create_work"
+          - "Show full work summary: title, description, number of tasks"
+          - "Ask: 'Should I save this work with these tasks?'"
+        transitions:
+          - event: "user_confirms_persist"
+            target: Persist
+          - event: "user_declines"
             target: Review
 
       - id: Persist
@@ -247,11 +266,26 @@ behaviour:
 
       - id: PostSubmit
         on_enter: "request_due_date_confirmation"
+        policy:
+          - "Send Slack due date confirmation (non-blocking)"
+          - "Do NOT automatically publish - wait for explicit confirmation"
         transitions:
           - event: "due_dates_confirmed"
+            target: ConfirmPublish
+          - event: "user_requests_publish"
+            target: ConfirmPublish
+
+      - id: ConfirmPublish
+        on_enter: "Ask user to confirm before publishing and scheduling."
+        policy:
+          - "ALWAYS get explicit confirmation before calling publish_work"
+          - "Ask: 'Should I publish this work and schedule the first task?'"
+          - "Explain what will happen: status changes, calendar event creation, tracking starts"
+        transitions:
+          - event: "user_confirms_publish"
             target: Publish
-          - event: "timeout_no_response"
-            target: Publish
+          - event: "user_declines"
+            target: Done
 
       - id: Publish
         action: "publish_first_task"
