@@ -80,11 +80,11 @@ work_lifecycle:
 
 tools:
   # Task Generation
-  - generate_subtasks: Generate actionable subtasks from work description
+  - generate_subtasks: Generate actionable subtasks from work description (returns work_name, work_description, and subtasks with description & priority)
   - refine_subtasks: Refine subtasks based on user feedback
   
   # Work Management
-  - create_work: Create work with optional tasks and auto due dates
+  - create_work: Create work with full descriptions. Pass work description and task objects with title/description/priority fields
   - publish_work: Publish work and optionally schedule first task
   - get_work: Get work details with all tasks
   - list_works: List works by status (draft/published/completed/all)
@@ -123,10 +123,12 @@ skills:
     description: "Turn a user-described work item into smaller subtasks."
     inputs: ["user_work_description", "expected_completion_hint?"]
     outputs: ["candidate_tasks", "initial_due_dates"]
-    uses_tools: ["time_service"]
+    uses_tools: ["generate_subtasks"]
     policy:
       - "Aim for 3–10 tasks; if more, group into phases."
       - "Spread due dates between now and expected completion."
+      - "ALWAYS populate work description from work_description field returned by generate_subtasks."
+      - "ALWAYS preserve task descriptions from subtasks - pass full task objects with description and priority."
 
   - id: refine_breakdown
     description: "Incorporate user feedback to adjust tasks."
@@ -146,10 +148,14 @@ skills:
       - "Respect user's explicit deadlines."
 
   - id: persist_work_and_tasks
-    description: "Write Work + Tasks to DB."
+    description: "Write Work + Tasks to DB with full descriptions."
     inputs: ["work_metadata", "scheduled_tasks"]
     outputs: ["work_id"]
-    uses_tools: ["work_store_api"]
+    uses_tools: ["create_work"]
+    policy:
+      - "Work description must be populated from generate_subtasks output."
+      - "Tasks must be passed as objects with title, description, and priority fields."
+      - "Never pass tasks as plain strings - always use full task objects to preserve descriptions."
 
   - id: request_due_date_confirmation
     description: "Send Slack message summarising due dates; wait for response."

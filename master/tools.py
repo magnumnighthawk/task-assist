@@ -73,13 +73,13 @@ def tool_refine_subtasks(original_subtasks: List[str], feedback: str) -> Dict[st
     return {"refined_subtasks": refined}
 
 
-def tool_create_work(title: str, description: str = '', tasks: List[str] = [], status: str = 'Draft', auto_due_dates: bool = False) -> Dict[str, Any]:
+def tool_create_work(title: str, description: str = '', tasks: List[Dict[str, str]] = [], status: str = 'Draft', auto_due_dates: bool = False) -> Dict[str, Any]:
     """Create work item with optional tasks.
     
     Args:
         title: Work title
         description: Work description
-        tasks: List of task titles
+        tasks: List of task dicts with 'title' and optionally 'description' and 'priority'
         status: Initial status (default: 'Draft')
         auto_due_dates: Whether to auto-assign due dates with spacing
         

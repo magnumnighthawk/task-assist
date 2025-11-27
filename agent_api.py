@@ -574,21 +574,37 @@ def publish_work_flow(work_id: int, schedule_first_task: bool = True) -> bool:
     return True
 
 
-def create_work_with_tasks(title: str, description: str, task_titles: List[str],
+def create_work_with_tasks(title: str, description: str, task_data: List[Dict[str, str]],
                            auto_due_dates: bool = False) -> Optional[int]:
     """Create a work item with multiple tasks.
     
     Args:
         title: Work title
         description: Work description
-        task_titles: List of task titles
+        task_data: List of task dicts with 'title' and optionally 'description' and 'priority'
         auto_due_dates: Whether to auto-assign due dates with spacing
         
     Returns:
         Created work ID or None on failure
     """
-    # Create tasks list
-    tasks = [{'title': t, 'status': str(TaskStatus.DRAFT)} for t in task_titles]
+    # Create tasks list - support both dict format and string format for backwards compatibility
+    tasks = []
+    for t in task_data:
+        if isinstance(t, dict):
+            task_dict = {
+                'title': t.get('title', t.get('description', 'Untitled')),
+                'description': t.get('description', ''),
+                'priority': t.get('priority', 'Medium'),
+                'status': str(TaskStatus.DRAFT)
+            }
+        else:
+            # Fallback for string format
+            task_dict = {
+                'title': str(t),
+                'description': '',
+                'status': str(TaskStatus.DRAFT)
+            }
+        tasks.append(task_dict)
     
     # Create work
     work = create_work(title, description, tasks, WorkStatus.DRAFT)
@@ -596,7 +612,7 @@ def create_work_with_tasks(title: str, description: str, task_titles: List[str],
         logger.error("Failed to create work")
         return None
     
-    logger.info(f"Created work {work.id} with {len(task_titles)} tasks")
+    logger.info(f"Created work {work.id} with {len(task_data)} tasks")
     
     # Auto-assign due dates if requested
     if auto_due_dates:
