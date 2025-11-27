@@ -27,25 +27,26 @@ domain_model:
   entities:
     Work:
       fields:
-        id: string
+        id: integer
         title: string
         description: string
         created_at: datetime
         expected_completion_hint: string | null   # "this week", "by Friday" etc
         status: ["Draft", "Published", "Completed"]
-        snooze_count: integer                      # derived from tasks/events
+        snooze_count: integer                      # computed from sum of tasks' snooze_count
     Task:
       fields:
-        id: string
-        work_id: string
+        id: integer
+        work_id: integer
         title: string
-        description: string
+        description: string | null
         order_index: integer
         priority: ["Low", "Medium", "High"]
-        due_datetime: datetime
+        due_date: datetime | null
         status: ["Draft", "Published", "Tracked", "Completed"]
         snooze_count: integer
         calendar_event_id: string | null
+        created_at: datetime
 
 work_lifecycle:
   create:
@@ -78,70 +79,44 @@ work_lifecycle:
       - "Send Slack summary & celebration"
 
 tools:
-  - id: time_service
-    description: "Get current date/time in user timezone."
-    operations:
-      - name: now
-        input: {}
-        output: { now: "datetime" }
-
-  - id: work_store_api
-    description: "Persist and retrieve Work and Task records."
-    operations:
-      - name: create_work_with_tasks
-        input: { work: "Work", tasks: "list<Task>" }
-        output: { work_id: string }
-      - name: update_work
-        input: { work_id: string, patch: "partial<Work>" }
-        output: { success: boolean }
-      - name: update_task
-        input: { task_id: string, patch: "partial<Task>" }
-        output: { success: boolean }
-      - name: get_work_with_tasks
-        input: { work_id: string }
-        output: { work: "Work", tasks: "list<Task>" }
-
-  - id: calendar_api
-    description: "Google Calendar operations for tasks."
-    operations:
-      - name: create_event
-        input:
-          summary: string
-          description: string
-          start: datetime
-          end: datetime
-          metadata: { work_id: string, task_id: string }
-        output: { event_id: string }
-      - name: update_event
-        input:
-          event_id: string
-          patch: { summary?: string, description?: string,
-                  start?: datetime, end?: datetime }
-        output: { success: boolean }
-      - name: list_events_for_work
-        input: { work_id: string, window_start: datetime, window_end: datetime }
-        output: { events: "list<CalendarEvent>" }
-
-  - id: slack_notifier
-    description: "Send and receive notifications / confirmations."
-    operations:
-      - name: send_message
-        input: { channel: string, text: string, blocks?: "json" }
-        output: { message_id: string }
-      - name: send_interactive_confirmation
-        input:
-          channel: string
-          text: string
-          choices: "list<{id: string, label: string}>"
-        output: { selected_choice_id: string | null }
-
-  - id: scheduler
-    description: "Schedule background triggers."
-    operations:
-      - name: schedule_at
-        input: { run_at: datetime, payload: "json" }
-      - name: schedule_cron
-        input: { cron: string, payload: "json" }
+  # Task Generation
+  - generate_subtasks: Generate actionable subtasks from work description
+  - refine_subtasks: Refine subtasks based on user feedback
+  
+  # Work Management
+  - create_work: Create work with optional tasks and auto due dates
+  - publish_work: Publish work and optionally schedule first task
+  - get_work: Get work details with all tasks
+  - list_works: List works by status (draft/published/completed/all)
+  - complete_work: Mark work as completed
+  
+  # Task Management
+  - create_task: Create single task under work
+  - list_tasks: List tasks by status and/or work_id
+  - get_today_tasks: Get tasks due today
+  - get_weekly_status: Get current week's task breakdown and completion rate
+  - get_overdue_tasks: Get overdue tasks
+  - update_task_status: Update task status
+  - complete_task_and_schedule_next: Complete task and schedule next pending one
+  - snooze_task: Snooze task by N days
+  - reschedule_task_event: Reschedule task to new due date
+  
+  # Calendar/Google Tasks Integration
+  - schedule_task_to_calendar: Schedule task as Google Calendar/Tasks event
+  - schedule_first_untracked_task: Find and schedule first untracked task for work
+  - list_upcoming_events: List upcoming calendar events
+  - sync_event_update: Sync changes from Google Calendar back to task
+  
+  # Notifications
+  - send_slack_message: Send text message to Slack
+  - send_due_date_confirmation: Send due date confirmation for work
+  - notify_task_completed: Send task completion notification
+  - notify_work_completed: Send work completion notification
+  - grouped_work_alert: Send grouped notification for multiple work changes
+  - daily_planner_digest: Send Slack notification of today's tasks
+  
+  # Background/Async
+  - queue_celery_task: Queue task for async Celery processing
 
 skills:
   - id: breakdown_work

@@ -364,7 +364,7 @@ elif page == "Agent Console":
                         subtasks = gen_res.get('subtasks', []) if isinstance(gen_res, dict) else []
                         tasks_payload = []
                         for stask in subtasks:
-                            tasks_payload.append({'title': stask.get('description'), 'status': 'pending'})
+                            tasks_payload.append({'title': stask.get('description'), 'status': 'Draft'})
                     except Exception as e:
                         return {'error': f'Failed to generate subtasks: {e}'}
 

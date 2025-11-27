@@ -18,8 +18,6 @@ from db import (
     update_task_status as db_update_task_status,
     update_task_calendar_event as db_update_task_calendar_event,
     increment_task_snooze as db_increment_task_snooze,
-    mark_task_notified as db_mark_task_notified,
-    mark_work_notified as db_mark_work_notified,
 )
 from .work import WorkStatus
 from .task import TaskStatus
@@ -27,10 +25,17 @@ from .task import TaskStatus
 
 @contextmanager
 def get_session() -> Generator:
-    """Context manager for database sessions."""
+    """Context manager for database sessions.
+    
+    Note: Objects returned from queries will be expired after the session closes.
+    Use session.expunge_all() before returning if you need to use objects after session close.
+    """
     session = SessionLocal()
     try:
         yield session
+        # Expunge all objects from session to make them usable after close
+        # This prevents DetachedInstanceError when accessing attributes later
+        session.expunge_all()
     finally:
         session.close()
 
@@ -112,30 +117,19 @@ def update_work_status(work_id: int, new_status: WorkStatus) -> Optional[Work]:
     """
     with get_session() as session:
         if new_status == WorkStatus.PUBLISHED:
-            return db_publish_work(session, work_id)
+            work = db_publish_work(session, work_id)
         elif new_status == WorkStatus.COMPLETED:
-            return db_complete_work(session, work_id)
+            work = db_complete_work(session, work_id)
         else:
             work = db_get_work(session, work_id)
             if work:
                 work.status = str(new_status)
                 session.commit()
-            return work
-
-
-def mark_work_as_notified(work_id: int) -> Optional[Work]:
-    """Mark work as notified to prevent duplicate notifications."""
-    with get_session() as session:
-        return db_mark_work_notified(session, work_id)
-
-
-def get_unnotified_completed_works() -> List[Work]:
-    """Get all completed work items that haven't been notified."""
-    with get_session() as session:
-        return session.query(Work).filter(
-            Work.status == str(WorkStatus.COMPLETED),
-            Work.notified == False
-        ).all()
+        
+        # Refresh to ensure all attributes are loaded before session.expunge_all()
+        if work:
+            session.refresh(work)
+        return work
 
 
 # ===== Task Operations =====
@@ -194,7 +188,7 @@ def get_task_by_calendar_id(calendar_event_id: str) -> Optional[Task]:
         ).first()
 
 
-def create_task(work_id: int, title: str, status: TaskStatus = TaskStatus.PENDING,
+def create_task(work_id: int, title: str, status: TaskStatus = TaskStatus.DRAFT,
                 due_date: Optional[datetime] = None) -> Task:
     """Create a new task for a work item.
     
@@ -271,22 +265,6 @@ def increment_task_snooze(task_id: int) -> Optional[Task]:
     """
     with get_session() as session:
         return db_increment_task_snooze(session, task_id)
-
-
-def mark_task_as_notified(task_id: int) -> Optional[Task]:
-    """Mark task as notified to prevent duplicate notifications."""
-    with get_session() as session:
-        return db_mark_task_notified(session, task_id)
-
-
-def get_unnotified_completed_tasks() -> List[Task]:
-    """Get all completed tasks that haven't been notified."""
-    with get_session() as session:
-        from sqlalchemy.orm import joinedload
-        return session.query(Task).options(joinedload(Task.work)).filter(
-            Task.status == str(TaskStatus.COMPLETED),
-            Task.notified == False
-        ).all()
 
 
 def get_today_tasks() -> List[Task]:

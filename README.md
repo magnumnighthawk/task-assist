@@ -88,7 +88,7 @@ docker run -p 80:80 --env-file .env task-assist
    ```bash
    honcho start
    ```
-   This uses the `Procfile` to launch Flask, Streamlit, Celery, Redis, Nginx, and other services in parallel.
+   This uses the `Procfile` to launch Flask, Streamlit, Celery, Redis, Agent, and other services in parallel.
 
 ### Docker (Recommended for Production/Cloud)
 Build and run the multi-service container:
@@ -159,12 +159,14 @@ This project includes a lightweight AI Agent that can plan and execute actions b
    - `OPENAI_API_KEY` — (optional) if set the Agent will use the OpenAI API to generate plans and actions. If not set, the Agent operates in safe mode and returns descriptive responses and available tools.
    - `OPENAI_MODEL` — (optional) LLM model name, defaults to `gpt-3.5-turbo`.
    - `SLACK_WEBHOOK_URL` — webhook used by reminder helpers for notifications.
+   - `GMP_API_KEY` — Google Gemini API key for the ADK agent (required for agent functionality).
 
 Security and safety notes:
 - The Agent can call tools that mutate state (create_work, publish_work, schedule_task_to_calendar, queue_celery_task). The Streamlit Console enforces a Plan -> Review -> Execute flow and adds a confirmation checkbox for mutating tools. If you expose the `/agent` endpoint publicly, add authentication and request validation.
 
 Deployment:
-- The Agent server is started via Supervisor/Procfile as `agent: python agents/server.py` and included in the container by the updated `Procfile` and `supervisord.conf`.
+- The Agent server is started via Supervisor/Procfile as `agent: adk web --port 3000 --agent-path master.agent:root_agent` and included in the container by the updated `Procfile` and `supervisord.conf`.
+- The Agent is accessible at `/agent` route via nginx proxy (port 3000 internally, routed through nginx on port 8000).
 
 Examples:
 

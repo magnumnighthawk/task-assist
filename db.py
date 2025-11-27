@@ -5,7 +5,7 @@ from datetime import datetime
 
 Base = declarative_base()
 engine = create_engine('sqlite:///task_manager.db')
-SessionLocal = sessionmaker(bind=engine)
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 def get_db():
     db = SessionLocal()
@@ -20,7 +20,7 @@ class Work(Base):
     title = Column(String, nullable=False)
     description = Column(Text)
     status = Column(String, default='Draft')  # Draft, Published, Completed
-    notified = Column(Boolean, default=False)
+    expected_completion_hint = Column(String, nullable=True)  # "this week", "by Friday", etc
     created_at = Column(DateTime, default=datetime.utcnow)
     tasks = relationship('Task', back_populates='work', cascade='all, delete-orphan')
 
@@ -29,8 +29,10 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     work_id = Column(Integer, ForeignKey('work.id'))
     title = Column(String, nullable=False)
-    status = Column(String, default='Published')  # Published, Tracked, Completed
-    notified = Column(Boolean, default=False)
+    description = Column(Text, nullable=True)
+    order_index = Column(Integer, default=0)
+    priority = Column(String, default='Medium')  # Low, Medium, High
+    status = Column(String, default='Draft')  # Draft, Published, Tracked, Completed
     due_date = Column(DateTime, nullable=True)
     snooze_count = Column(Integer, default=0)
     calendar_event_id = Column(String, nullable=True)
@@ -102,7 +104,7 @@ def update_task_calendar_event(db, task_id, event_id):
         db.commit()
     return task
 
-def create_task(db, work_id, title, status='pending', due_date=None):
+def create_task(db, work_id, title, status='Draft', due_date=None):
     task = Task(work_id=work_id, title=title, status=status, due_date=due_date)
     db.add(task)
     db.commit()
@@ -126,21 +128,6 @@ def get_unnotified_completed_tasks(db):
 
 def get_unnotified_completed_works(db):
     return db.query(Work).filter(Work.status == 'Completed', Work.notified == False).all()
-
-def mark_task_notified(db, task_id):
-    task = db.query(Task).filter(Task.id == task_id).first()
-    if task:
-        task.notified = True
-        db.commit()
-    return task
-
-def mark_work_notified(db, work_id):
-    work = db.query(Work).filter(Work.id == work_id).first()
-    if work:
-        work.notified = True
-        db.commit()
-    return work
-
 
 def create_watch_channel(db, channel_id, resource_id, address, expiration=None):
     wc = WatchChannel(channel_id=channel_id, resource_id=resource_id, address=address, expiration=expiration)

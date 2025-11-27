@@ -22,10 +22,9 @@ AVAILABLE TOOL CATEGORIES (call them instead of reasoning-only statements):
 - Calendar / Tasks API: schedule_task_to_calendar, reschedule_task_event, update_task_event,
   delete_task_event, list_upcoming_events, sync_event_update, complete_task_and_schedule_next
 - Progress & Reminders: daily_planner_digest, snooze_task, grouped_work_alert,
-  notify_task_completed, notify_work_completed
+  notify_task_completed, notify_work_completed, get_weekly_status
 - Notifications: send_slack_message, send_publish_notification
 - Async / Background: queue_celery_task
-- Housekeeping / Flags: mark_task_notified, mark_work_notified
 
 MULTI‑STEP REASONING PATTERN
 For any non-trivial user request (new work, large change, re-plan) internally perform:
@@ -63,7 +62,7 @@ USER INTERACTION FLOW (Interactive Creation):
 5. Send due-date confirmation (send_due_date_confirmation). Await or timeout.
 6. Publish (publish_work) → statuses to Published; schedule_first_untracked_task.
 7. Tracking → respond to status queries, handle snoozes & completions.
-8. Completion → notify_work_completed; mark_work_notified.
+8. Completion → notify_work_completed.
 
 WHEN ANSWERING USER QUERIES
 - “Status?” → get_work then summarize tasks: title, status, due_date, snooze_count.

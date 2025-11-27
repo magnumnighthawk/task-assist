@@ -178,6 +178,15 @@ class GoogleTasksProvider:
                 logger.warning(f"Timeout creating task (attempt {attempt}/{max_retries})")
                 if attempt < max_retries:
                     time.sleep(2 * attempt)
+            except OSError as e:
+                # Handle network errors like [Errno 49] Can't assign requested address
+                if e.errno == 49:
+                    logger.warning(f"Network error creating task (attempt {attempt}/{max_retries}): Port exhaustion or network issue")
+                else:
+                    logger.warning(f"OS error creating task (attempt {attempt}/{max_retries}): {e}")
+                if attempt < max_retries:
+                    # Exponential backoff for network issues
+                    time.sleep(3 * attempt)
             except Exception as e:
                 logger.exception(f"Error creating task (attempt {attempt}/{max_retries}): {e}")
                 if attempt < max_retries:
@@ -226,6 +235,12 @@ class GoogleTasksProvider:
             logger.info(f"Updated task: {task_id}")
             return updated
         
+        except OSError as e:
+            if e.errno == 49:
+                logger.warning(f"Network error updating task {task_id}: Port exhaustion or network issue")
+            else:
+                logger.warning(f"OS error updating task {task_id}: {e}")
+            return None
         except Exception as e:
             logger.exception(f"Failed to update task {task_id}: {e}")
             return None
@@ -249,6 +264,12 @@ class GoogleTasksProvider:
             self.service.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
             logger.info(f"Deleted task: {task_id}")
             return True
+        except OSError as e:
+            if e.errno == 49:
+                logger.warning(f"Network error deleting task {task_id}: Port exhaustion or network issue")
+            else:
+                logger.warning(f"OS error deleting task {task_id}: {e}")
+            return False
         except Exception as e:
             logger.exception(f"Failed to delete task {task_id}: {e}")
             return False
@@ -271,6 +292,12 @@ class GoogleTasksProvider:
         try:
             task = self.service.tasks().get(tasklist=tasklist_id, task=task_id).execute()
             return task
+        except OSError as e:
+            if e.errno == 49:
+                logger.warning(f"Network error getting task {task_id}: Port exhaustion or network issue")
+            else:
+                logger.warning(f"OS error getting task {task_id}: {e}")
+            return None
         except Exception as e:
             logger.exception(f"Failed to get task {task_id}: {e}")
             return None

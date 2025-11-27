@@ -45,7 +45,8 @@ def test_enums():
         
         # Test TaskStatus
         assert TaskStatus.PUBLISHED == "Published"
-        assert TaskStatus.from_string("pending") == TaskStatus.PENDING
+        assert TaskStatus.from_string("draft") == TaskStatus.DRAFT
+        assert TaskStatus.from_string("pending") == TaskStatus.DRAFT  # Legacy mapping
         assert TaskStatus.COMPLETED.to_google_tasks() == "completed"
         assert TaskStatus.from_google_tasks("needsAction") == TaskStatus.PUBLISHED
         

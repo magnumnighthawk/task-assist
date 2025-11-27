@@ -92,14 +92,14 @@ def tool_create_work(title: str, description: str = '', tasks: List[str] = [], s
     return {'error': 'failed to create work'}
 
 
-def tool_create_task(work_id: int, title: str, status: str = 'Pending', due_date: Optional[str] = None) -> Dict[str, Any]:
+def tool_create_task(work_id: int, title: str, status: str = 'Draft', due_date: Optional[str] = None) -> Dict[str, Any]:
     """Create a single task under an existing work.
     
     Args:
         work_id: Parent work ID
         title: Task title
-        status: Initial status (default Pending)
-        due_date: ISO date/time string (optional)
+        status: Initial status (default Draft)
+        due_date: Optional due date (ISO format string)
         
     Returns:
         {"task_id": id, "title": title, "status": status, "due_date": date_str}
@@ -314,9 +314,9 @@ def tool_notify_task_completed(task_id: int) -> Dict[str, Any]:
         task_id: Task ID
         
     Returns:
-        {"notified_task_id": id}
+        {"sent": True/False}
     """
-    from core.storage import get_task_by_id, get_work_by_id, mark_task_as_notified
+    from core.storage import get_task_by_id, get_work_by_id
     from core.slack import get_notifier
     
     task = get_task_by_id(task_id)
@@ -326,10 +326,10 @@ def tool_notify_task_completed(task_id: int) -> Dict[str, Any]:
     work = get_work_by_id(task.work_id, include_tasks=False)
     if work:
         notifier = get_notifier()
-        notifier.send_task_completed(task, work)
-        mark_task_as_notified(task_id)
+        result = notifier.send_task_completed(task, work)
+        return {"sent": result}
     
-    return {"notified_task_id": task_id}
+    return {"sent": False}
 
 
 def tool_notify_work_completed(work_id: int) -> Dict[str, Any]:
@@ -339,9 +339,9 @@ def tool_notify_work_completed(work_id: int) -> Dict[str, Any]:
         work_id: Work ID
         
     Returns:
-        {"notified_work_id": id}
+        {"sent": True/False}
     """
-    from core.storage import get_work_by_id, mark_work_as_notified
+    from core.storage import get_work_by_id
     from core.slack import get_notifier
     
     work = get_work_by_id(work_id, include_tasks=True)
@@ -349,10 +349,8 @@ def tool_notify_work_completed(work_id: int) -> Dict[str, Any]:
         return {"error": "work not found"}
     
     notifier = get_notifier()
-    notifier.send_work_completed(work)
-    mark_work_as_notified(work_id)
-    
-    return {"notified_work_id": work_id}
+    result = notifier.send_work_completed(work)
+    return {"sent": result}
 
 
 def tool_grouped_work_alert(work_id: int, changes: List[str]) -> Dict[str, Any]:
@@ -397,16 +395,44 @@ def tool_complete_work(work_id: int) -> Dict[str, Any]:
 
 
 def tool_daily_planner_digest() -> Dict[str, Any]:
-    """Send daily reminder of today's tasks.
+    """Send daily reminder notification of today's tasks via Slack.
+    
+    This tool sends a Slack notification with today's tasks. Use tool_get_today_tasks() 
+    if you want to retrieve and display today's tasks to the user instead.
     
     Returns:
-        {"sent": True}
+        {"sent": True/False}
     """
     try:
         result = agent_api.send_daily_reminder()
         return {"sent": result}
     except Exception as e:
         logger.exception('Failed daily planner digest')
+        return {"error": str(e)}
+
+
+def tool_get_weekly_status() -> Dict[str, Any]:
+    """Get current week's task status and summary.
+    
+    Returns detailed breakdown of this week's tasks including completed, 
+    in-progress, and pending tasks. Week runs from Monday to Sunday.
+    
+    Returns:
+        {
+            "week_start": "YYYY-MM-DD",
+            "week_end": "YYYY-MM-DD",
+            "total_tasks": int,
+            "completed": [task_dicts],
+            "in_progress": [task_dicts],
+            "pending": [task_dicts],
+            "completion_rate": "X/Y"
+        }
+    """
+    try:
+        result = agent_api.get_weekly_tasks_summary()
+        return result
+    except Exception as e:
+        logger.exception('Failed to get weekly status')
         return {"error": str(e)}
 
 
@@ -442,7 +468,7 @@ def tool_list_tasks(status: str = 'all', work_id: Optional[int] = None) -> Dict[
     """List tasks by status.
     
     Args:
-        status: Status filter - 'pending', 'published', 'tracked', 'completed', 'all'
+        status: Status filter - 'draft', 'published', 'tracked', 'completed', 'all'
         work_id: Optional work ID filter
         
     Returns:
@@ -453,7 +479,10 @@ def tool_list_tasks(status: str = 'all', work_id: Optional[int] = None) -> Dict[
 
 
 def tool_get_today_tasks() -> Dict[str, Any]:
-    """Get all tasks due today.
+    """Get all tasks due today for display to user.
+    
+    Use this tool when user asks about today's tasks, today's schedule, 
+    or what's due today. Returns task data for the agent to present.
     
     Returns:
         {"tasks": [task_dicts]}
@@ -463,7 +492,10 @@ def tool_get_today_tasks() -> Dict[str, Any]:
 
 
 def tool_get_overdue_tasks() -> Dict[str, Any]:
-    """Get all overdue tasks.
+    """Get all overdue tasks for display to user.
+    
+    Use this tool when user asks about overdue tasks, missed deadlines,
+    or what tasks are past due. Returns task data for the agent to present.
     
     Returns:
         {"tasks": [task_dicts]}
@@ -547,6 +579,7 @@ TOOLS = {
     'create_task': tool_create_task,
     'list_tasks': tool_list_tasks,
     'get_today_tasks': tool_get_today_tasks,
+    'get_weekly_status': tool_get_weekly_status,
     'get_overdue_tasks': tool_get_overdue_tasks,
     'update_task_status': tool_update_task_status,
     'complete_task_and_schedule_next': tool_complete_task_and_schedule_next,

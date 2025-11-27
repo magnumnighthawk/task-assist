@@ -10,10 +10,10 @@ class TaskStatus(str, Enum):
     """Canonical task statuses.
     
     Maps to Google Tasks API statuses:
-    - PENDING, PUBLISHED, TRACKED -> needsAction
+    - DRAFT, PUBLISHED, TRACKED -> needsAction
     - COMPLETED -> completed
     """
-    PENDING = "Pending"      # Created but not yet published
+    DRAFT = "Draft"          # Created but not yet published
     PUBLISHED = "Published"  # Published and visible
     TRACKED = "Tracked"      # Currently active/in-progress
     COMPLETED = "Completed"  # Done
@@ -22,12 +22,12 @@ class TaskStatus(str, Enum):
     def from_string(cls, value: str):
         """Parse a status string, handling legacy/alternate values."""
         if not value:
-            return cls.PENDING
+            return cls.DRAFT
         
         normalized = value.strip().lower()
         mapping = {
-            'pending': cls.PENDING,
-            'draft': cls.PENDING,  # Legacy mapping
+            'draft': cls.DRAFT,
+            'pending': cls.DRAFT,  # Legacy mapping
             'published': cls.PUBLISHED,
             'tracked': cls.TRACKED,
             'completed': cls.COMPLETED,
@@ -35,7 +35,7 @@ class TaskStatus(str, Enum):
             'needsaction': cls.PUBLISHED,  # From Google Tasks
             'needs_action': cls.PUBLISHED,
         }
-        return mapping.get(normalized, cls.PENDING)
+        return mapping.get(normalized, cls.DRAFT)
     
     @classmethod
     def from_google_tasks(cls, google_status: str):
@@ -78,7 +78,7 @@ def can_transition(from_status: TaskStatus, to_status: TaskStatus) -> bool:
         return True
     
     valid_transitions = {
-        TaskStatus.PENDING: {TaskStatus.PUBLISHED},
+        TaskStatus.DRAFT: {TaskStatus.PUBLISHED},
         TaskStatus.PUBLISHED: {TaskStatus.TRACKED},
         TaskStatus.TRACKED: {TaskStatus.PUBLISHED},  # Can go back
     }

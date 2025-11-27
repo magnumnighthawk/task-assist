@@ -15,7 +15,7 @@ from core.task import TaskStatus
 from core.storage import (
     list_works, list_tasks, get_work_by_id, get_task_by_id,
     create_work, create_task, update_work_status, update_task_status,
-    get_today_tasks, mark_work_as_notified, mark_task_as_notified
+    get_today_tasks
 )
 from core.slack import get_notifier
 from core.tasks_provider import get_provider
@@ -74,6 +74,20 @@ def list_works_by_status(status: str) -> List[Dict[str, Any]]:
     return result
 
 
+def compute_work_snooze_count(work) -> int:
+    """Compute total snooze count for a work item from its tasks.
+    
+    Args:
+        work: Work object with tasks relationship loaded
+        
+    Returns:
+        Sum of all task snooze counts
+    """
+    if not hasattr(work, 'tasks'):
+        return 0
+    return sum(task.snooze_count for task in work.tasks)
+
+
 def get_work_details(work_id: int) -> Optional[Dict[str, Any]]:
     """Get detailed information about a work item including all tasks.
     
@@ -93,6 +107,9 @@ def get_work_details(work_id: int) -> Optional[Dict[str, Any]]:
             tasks.append({
                 'id': task.id,
                 'title': task.title,
+                'description': task.description,
+                'order_index': task.order_index,
+                'priority': task.priority,
                 'status': task.status,
                 'due_date': task.due_date.isoformat() if task.due_date else None,
                 'snooze_count': task.snooze_count,
@@ -105,7 +122,9 @@ def get_work_details(work_id: int) -> Optional[Dict[str, Any]]:
         'title': work.title,
         'description': work.description,
         'status': work.status,
+        'expected_completion_hint': work.expected_completion_hint,
         'created_at': work.created_at.isoformat() if work.created_at else None,
+        'snooze_count': compute_work_snooze_count(work),
         'tasks': tasks
     }
 
@@ -181,7 +200,7 @@ def list_tasks_by_status(status: str, work_id: Optional[int] = None) -> List[Dic
     """List tasks filtered by status.
     
     Args:
-        status: Status filter - 'pending', 'published', 'tracked', 'completed', 'active' (tracked), or 'all'
+        status: Status filter - 'draft', 'published', 'tracked', 'completed', 'active' (tracked), or 'all'
         work_id: Optional work ID to filter by
         
     Returns:
@@ -268,6 +287,64 @@ def get_overdue_tasks() -> List[Dict[str, Any]]:
         })
     
     return result
+
+
+def get_weekly_tasks_summary(start_date: Optional[datetime] = None) -> Dict[str, Any]:
+    """Get all tasks for the current or specified week.
+    
+    Args:
+        start_date: Start of week (defaults to current week Monday)
+        
+    Returns:
+        Dictionary with week info and categorized tasks
+    """
+    from datetime import timedelta
+    
+    # Default to current week (Monday to Sunday)
+    if start_date is None:
+        today = datetime.now()
+        # Get Monday of current week (0 = Monday, 6 = Sunday)
+        start_date = today - timedelta(days=today.weekday())
+    
+    # Set to start of day
+    start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = start_date + timedelta(days=7)
+    
+    # Get all non-completed tasks in the date range
+    tasks = list_tasks(due_after=start_date, due_before=end_date, exclude_completed=False)
+    
+    # Categorize tasks
+    completed = []
+    pending = []
+    in_progress = []
+    
+    for task in tasks:
+        work_title = task.work.title if hasattr(task, 'work') else "Unknown"
+        task_dict = {
+            'id': task.id,
+            'title': task.title,
+            'status': task.status,
+            'work_id': task.work_id,
+            'work_title': work_title,
+            'due_date': task.due_date.isoformat() if task.due_date else None
+        }
+        
+        if task.status.lower() == 'completed':
+            completed.append(task_dict)
+        elif task.status.lower() == 'tracked':
+            in_progress.append(task_dict)
+        else:
+            pending.append(task_dict)
+    
+    return {
+        'week_start': start_date.strftime('%Y-%m-%d'),
+        'week_end': end_date.strftime('%Y-%m-%d'),
+        'total_tasks': len(tasks),
+        'completed': completed,
+        'in_progress': in_progress,
+        'draft': pending,
+        'completion_rate': f"{len(completed)}/{len(tasks)}" if tasks else "0/0"
+    }
 
 
 # ===== Task Operations =====
@@ -482,10 +559,13 @@ def publish_work_flow(work_id: int, schedule_first_task: bool = True) -> bool:
         return False
     
     # Schedule first task if requested
-    if schedule_first_task and hasattr(work, 'tasks') and work.tasks:
-        first_task = work.tasks[0]
-        update_task_status(first_task.id, TaskStatus.TRACKED)
-        ensure_task_scheduled(first_task.id, work.title)
+    if schedule_first_task:
+        # Reload work with tasks to avoid detached instance error
+        work = get_work_by_id(work_id, include_tasks=True)
+        if work and hasattr(work, 'tasks') and work.tasks:
+            first_task = work.tasks[0]
+            update_task_status(first_task.id, TaskStatus.TRACKED)
+            ensure_task_scheduled(first_task.id, work.title)
     
     # Send publish notification
     send_work_publish_notification(work_id)
@@ -508,7 +588,7 @@ def create_work_with_tasks(title: str, description: str, task_titles: List[str],
         Created work ID or None on failure
     """
     # Create tasks list
-    tasks = [{'title': t, 'status': str(TaskStatus.PENDING)} for t in task_titles]
+    tasks = [{'title': t, 'status': str(TaskStatus.DRAFT)} for t in task_titles]
     
     # Create work
     work = create_work(title, description, tasks, WorkStatus.DRAFT)
