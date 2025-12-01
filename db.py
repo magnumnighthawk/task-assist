@@ -55,8 +55,8 @@ Base.metadata.create_all(bind=engine)
 # CRUD functions
 
 
-def create_work(db, title, description, tasks=None, status='Draft'):
-    work = Work(title=title, description=description, status=status)
+def create_work(db, title, description, tasks=None, status='Draft', expected_completion_hint=None):
+    work = Work(title=title, description=description, status=status, expected_completion_hint=expected_completion_hint)
     if tasks:
         for t in tasks:
             work.tasks.append(Task(**t))

@@ -5,8 +5,12 @@ with conflict resolution and snooze logic.
 """
 
 import logging
-from typing import Optional
+import os
+import json
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+from openai import OpenAI
 
 from db import Task
 from .storage import (
@@ -16,7 +20,9 @@ from .storage import (
 from .scheduling import reschedule_task
 from .slack import get_notifier
 
+load_dotenv()
 logger = logging.getLogger(__name__)
+openai_client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
 
 class DueDateManager:
@@ -174,44 +180,195 @@ def bulk_set_due_dates(task_due_map: dict) -> dict:
     return results
 
 
-def auto_assign_due_dates(work_id: int, start_date: Optional[datetime] = None,
-                          spacing_days: int = 1) -> bool:
-    """Auto-assign due dates to tasks in a work item with even spacing.
+
+
+
+
+
+
+def llm_assign_due_dates(tasks: List[Task], expected_completion_hint: Optional[str], 
+                        current_date: datetime) -> Dict[int, datetime]:
+    """Use LLM to intelligently assign due dates based on task difficulty and context.
+    
+    Args:
+        tasks: List of Task objects to assign due dates for
+        expected_completion_hint: Deadline hint like "this week", "by Friday", "in 3 days"
+        current_date: Current datetime for reference
+        
+    Returns:
+        Dict mapping task_id -> assigned due datetime
+    """
+    # Prepare task data for LLM
+    task_info = []
+    for task in tasks:
+        task_info.append({
+            "id": task.id,
+            "title": task.title,
+            "description": task.description or "",
+            "priority": task.priority
+        })
+    
+    current_date_str = current_date.strftime("%Y-%m-%d %A")
+    
+    system_prompt = (
+        "You are an expert project planner and task scheduler. "
+        "Given a list of tasks, analyze each task's title, description, and priority to estimate "
+        "the realistic time and effort required. Then assign appropriate due dates that:\n"
+        "1. Consider the difficulty and time required for each task\n"
+        "2. Respect the overall deadline/completion hint\n"
+        "3. Schedule harder/longer tasks earlier to avoid last-minute crunches\n"
+        "4. Prioritize High priority tasks to be done sooner\n"
+        "5. Allow reasonable time for each task (don't over-schedule)\n"
+        "6. Prefer weekdays (Mon-Fri) over weekends when possible\n"
+        "7. Consider dependencies (e.g., research before implementation)\n\n"
+        "Return a JSON object with a 'schedule' array where each item has:\n"
+        "- task_id: the task ID (integer)\n"
+        "- due_date: assigned date in YYYY-MM-DD format\n"
+        "- reasoning: brief explanation of why this date makes sense\n\n"
+        "Be realistic about time estimates. Most tasks take longer than expected."
+    )
+    
+    user_prompt = (
+        f"Current date: {current_date_str}\n"
+        f"Expected completion: {expected_completion_hint or 'No specific deadline'}\n\n"
+        f"Tasks to schedule:\n{json.dumps(task_info, indent=2)}\n\n"
+        "Please provide a realistic schedule for these tasks in JSON format."
+    )
+    
+    try:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        response = openai_client.chat.completions.create(
+            model=os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo'),
+            messages=messages,
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        logger.info(f"LLM schedule response: {json.dumps(result, indent=2)}")
+        
+        # Parse the schedule
+        schedule = {}
+        for item in result.get('schedule', []):
+            task_id = item.get('task_id')
+            due_date_str = item.get('due_date')
+            reasoning = item.get('reasoning', '')
+            
+            if task_id and due_date_str:
+                try:
+                    # Parse date and set to 8am
+                    due_date = datetime.strptime(due_date_str, '%Y-%m-%d')
+                    due_date = due_date.replace(hour=8, minute=0, second=0, microsecond=0)
+                    schedule[task_id] = due_date
+                    logger.info(f"Task {task_id}: {due_date_str} - {reasoning}")
+                except ValueError as e:
+                    logger.error(f"Invalid date format from LLM: {due_date_str}")
+        
+        return schedule
+        
+    except Exception as e:
+        logger.error(f"Error calling LLM for due date assignment: {e}")
+        return {}
+
+
+def propose_due_dates(work_id: int, expected_completion_hint: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Generate proposed due dates using LLM without persisting them.
+    
+    Uses AI to analyze task difficulty, complexity, and context to propose realistic due dates.
+    Returns the proposal for user review and confirmation.
     
     Args:
         work_id: Work item ID
-        start_date: Starting date (defaults to tomorrow)
-        spacing_days: Days between each task
+        expected_completion_hint: Deadline hint like "this week", "by Friday", "in 3 days"
         
     Returns:
-        True if assigned successfully
+        Dict with 'schedule' (list of {task_id, task_title, due_date, reasoning}) or None if failed
     """
     from .storage import list_tasks, get_work_by_id
     
     work = get_work_by_id(work_id, include_tasks=True)
     if not work:
         logger.error(f"Work {work_id} not found")
-        return False
+        return None
     
     tasks = list_tasks(work_id=work_id, exclude_completed=True)
     if not tasks:
         logger.info(f"No tasks to assign due dates for work {work_id}")
-        return True
+        return {'schedule': []}
     
-    # Start from tomorrow if not specified
-    if not start_date:
-        start_date = datetime.utcnow() + timedelta(days=1)
-        # Set to 8am
-        start_date = start_date.replace(hour=8, minute=0, second=0, microsecond=0)
+    # Filter out tasks that already have due dates
+    tasks_to_schedule = [t for t in tasks if not t.due_date]
+    if not tasks_to_schedule:
+        logger.info(f"All tasks already have due dates for work {work_id}")
+        return {'schedule': []}
+    
+    now = datetime.utcnow()
+    
+    # Use LLM to generate schedule
+    logger.info(f"Using LLM to propose due dates for {len(tasks_to_schedule)} tasks")
+    schedule = llm_assign_due_dates(tasks_to_schedule, expected_completion_hint, now)
+    
+    if not schedule:
+        logger.error(f"LLM failed to generate schedule")
+        return None
+    
+    # Build response with task details
+    result = []
+    for task in tasks_to_schedule:
+        if task.id in schedule:
+            result.append({
+                'task_id': task.id,
+                'task_title': task.title,
+                'due_date': schedule[task.id].strftime('%Y-%m-%d'),
+                'due_date_formatted': schedule[task.id].strftime('%A, %B %d, %Y')
+            })
+    
+    return {'schedule': result, 'work_id': work_id}
+
+
+def confirm_and_apply_due_dates(work_id: int, schedule_data: Dict[int, str]) -> bool:
+    """Apply confirmed due dates to tasks.
+    
+    Args:
+        work_id: Work item ID
+        schedule_data: Dict mapping task_id -> 'YYYY-MM-DD' date string
+        
+    Returns:
+        True if all dates applied successfully
+    """
+    from .storage import get_work_by_id
+    
+    work = get_work_by_id(work_id, include_tasks=True)
+    if not work:
+        logger.error(f"Work {work_id} not found")
+        return False
     
     manager = DueDateManager()
-    current_date = start_date
+    success_count = 0
+    now = datetime.utcnow()
     
-    for task in tasks:
-        if not task.due_date:  # Only assign if not already set
-            logger.info(f"Auto-assigning due date {current_date} to task {task.id}")
-            manager.set_due_date(task.id, current_date, source="auto")
-            current_date += timedelta(days=spacing_days)
+    for task_id, date_str in schedule_data.items():
+        try:
+            # Parse date and set to 8am
+            due_date = datetime.strptime(date_str, '%Y-%m-%d')
+            due_date = due_date.replace(hour=8, minute=0, second=0, microsecond=0)
+            
+            # Ensure date is in the future
+            if due_date < now:
+                logger.warning(f"Due date {due_date} is in the past, adjusting to tomorrow")
+                due_date = now + timedelta(days=1)
+                due_date = due_date.replace(hour=8, minute=0, second=0, microsecond=0)
+            
+            if manager.set_due_date(task_id, due_date, source="user_confirmed"):
+                success_count += 1
+            else:
+                logger.error(f"Failed to set due date for task {task_id}")
+        except ValueError as e:
+            logger.error(f"Invalid date format for task {task_id}: {date_str} - {e}")
     
-    logger.info(f"Auto-assigned due dates for work {work_id}")
-    return True
+    logger.info(f"Successfully applied {success_count}/{len(schedule_data)} due dates for work {work_id}")
+    return success_count == len(schedule_data)

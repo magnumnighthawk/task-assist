@@ -87,7 +87,7 @@ def get_work_by_id(work_id: int, include_tasks: bool = True) -> Optional[Work]:
 
 
 def create_work(title: str, description: str, tasks: Optional[List[dict]] = None, 
-                status: WorkStatus = WorkStatus.DRAFT) -> Work:
+                status: WorkStatus = WorkStatus.DRAFT, expected_completion_hint: Optional[str] = None) -> Work:
     """Create a new work item with optional tasks.
     
     Args:
@@ -95,12 +95,13 @@ def create_work(title: str, description: str, tasks: Optional[List[dict]] = None
         description: Work description
         tasks: List of task dicts with 'title', 'status', 'due_date' keys
         status: Initial work status
+        expected_completion_hint: Optional deadline hint like "this week", "by Friday", etc.
         
     Returns:
         Created Work object
     """
     with get_session() as session:
-        work = db_create_work(session, title, description, tasks, str(status))
+        work = db_create_work(session, title, description, tasks, str(status), expected_completion_hint)
         session.refresh(work)
         return work
 

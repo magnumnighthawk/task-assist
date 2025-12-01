@@ -73,20 +73,23 @@ def tool_refine_subtasks(original_subtasks: List[str], feedback: str) -> Dict[st
     return {"refined_subtasks": refined}
 
 
-def tool_create_work(title: str, description: str = '', tasks: List[Dict[str, str]] = [], status: str = 'Draft', auto_due_dates: bool = False) -> Dict[str, Any]:
+def tool_create_work(title: str, description: str = '', tasks: List[Dict[str, str]] = [], status: str = 'Draft', expected_completion_hint: Optional[str] = None) -> Dict[str, Any]:
     """Create work item with optional tasks.
+    
+    Note: Due dates are NOT automatically assigned. After creation, use tool_propose_due_dates
+    to get AI-suggested dates, then show them to user for confirmation.
     
     Args:
         title: Work title
         description: Work description
         tasks: List of task dicts with 'title' and optionally 'description' and 'priority'
         status: Initial status (default: 'Draft')
-        auto_due_dates: Whether to auto-assign due dates with spacing
+        expected_completion_hint: Expected deadline like "this week", "by Friday", "in 3 days", etc.
         
     Returns:
         {"id": work_id, "title": work_title}
     """
-    work_id = agent_api.create_work_with_tasks(title, description, tasks, auto_due_dates)
+    work_id = agent_api.create_work_with_tasks(title, description, tasks, False, expected_completion_hint)
     if work_id:
         return {'id': work_id, 'title': title}
     return {'error': 'failed to create work'}
@@ -130,13 +133,33 @@ def tool_create_task(work_id: int, title: str, status: str = 'Draft', due_date: 
 def tool_publish_work(work_id: int, schedule_first_task: bool = True) -> Dict[str, Any]:
     """Publish a work item and send notifications.
     
+    IMPORTANT: All tasks must have due dates before publishing. If any task is missing a due date,
+    use tool_assign_smart_due_dates first to assign them.
+    
     Args:
         work_id: Work item ID
         schedule_first_task: Whether to schedule first task to calendar
         
     Returns:
-        {"published": True, "work_id": id}
+        {"published": True, "work_id": id} or {"error": "...", "tasks_without_dates": [...]}
     """
+    from core.storage import get_work_by_id, list_tasks
+    
+    # Validate all tasks have due dates
+    work = get_work_by_id(work_id, include_tasks=True)
+    if not work:
+        return {'error': 'work not found'}
+    
+    tasks = list_tasks(work_id=work_id, exclude_completed=True)
+    tasks_without_dates = [t.id for t in tasks if not t.due_date]
+    
+    if tasks_without_dates:
+        return {
+            'error': 'cannot publish: some tasks missing due dates',
+            'tasks_without_dates': tasks_without_dates,
+            'message': f'{len(tasks_without_dates)} task(s) need due dates. Use tool_assign_smart_due_dates to set them.'
+        }
+    
     result = agent_api.publish_work_flow(work_id, schedule_first_task)
     if result:
         return {'published': True, 'work_id': work_id}
@@ -223,6 +246,54 @@ def tool_complete_task_and_schedule_next(task_id: int) -> Dict[str, Any]:
     if result:
         return {"completed_task_id": task_id, "work_id": task.work_id}
     return {"error": "failed to complete task"}
+
+
+def tool_propose_due_dates(work_id: int, expected_completion_hint: Optional[str] = None) -> Dict[str, Any]:
+    """Generate AI-proposed due dates for tasks (does NOT persist them).
+    
+    Uses LLM to analyze task difficulty and propose realistic due dates.
+    ALWAYS show the proposed dates to user for review before calling tool_confirm_due_dates.
+    
+    Args:
+        work_id: Work item ID
+        expected_completion_hint: Deadline like "this week", "by Friday", "in 3 days". Uses work's hint if not provided.
+        
+    Returns:
+        {
+            "work_id": int,
+            "schedule": [{"task_id": id, "task_title": title, "due_date": "YYYY-MM-DD", "due_date_formatted": "Monday, Dec 1, 2025"}],
+            "schedule_map": {task_id: "YYYY-MM-DD", ...}  # Use this for tool_confirm_due_dates
+        }
+    """
+    result = agent_api.propose_due_dates_for_work(work_id, expected_completion_hint)
+    if result:
+        # Add schedule_map for easy confirmation
+        if 'schedule' in result:
+            schedule_map = {item['task_id']: item['due_date'] for item in result['schedule']}
+            result['schedule_map'] = schedule_map
+        return result
+    return {"error": "failed to propose due dates"}
+
+
+def tool_confirm_due_dates(work_id: int, schedule: Dict[int, str]) -> Dict[str, Any]:
+    """Apply user-confirmed due dates to tasks.
+    
+    Only call this AFTER user has reviewed and confirmed the proposed dates.
+    Use the 'schedule_map' from tool_propose_due_dates output as the 'schedule' parameter here.
+    
+    Args:
+        work_id: Work item ID
+        schedule: Dict mapping task_id (int) -> due_date ("YYYY-MM-DD" string)
+                  Example: {16: "2025-12-02", 17: "2025-12-05", 18: "2025-12-09"}
+                  Use the 'schedule_map' field from tool_propose_due_dates response
+        
+    Returns:
+        {"work_id": id, "confirmed": True, "count": number_of_tasks}
+    """
+    result = agent_api.confirm_due_dates_for_work(work_id, schedule)
+    if result:
+        return {"work_id": work_id, "confirmed": True, "count": len(schedule)}
+    return {"error": "failed to confirm due dates"}
 
 
 def tool_snooze_task(task_id: int, days: int = 1) -> Dict[str, Any]:
@@ -585,6 +656,8 @@ TOOLS = {
     'complete_task_and_schedule_next': tool_complete_task_and_schedule_next,
     'snooze_task': tool_snooze_task,
     'reschedule_task_event': tool_reschedule_task_event,
+    'propose_due_dates': tool_propose_due_dates,
+    'confirm_due_dates': tool_confirm_due_dates,
     
     # Calendar/Google Tasks
     'schedule_task_to_calendar': tool_schedule_task_to_calendar,

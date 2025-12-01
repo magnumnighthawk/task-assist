@@ -70,6 +70,10 @@ work_lifecycle:
       - "Schedule calendar creation of first Task once confirmed"
   publish:
     description: "First task scheduled on calendar; statuses updated."
+    prerequisites:
+      - "ALL tasks MUST have due_date set before publishing"
+      - "Due dates must be user-confirmed (via agent or Slack)"
+      - "Use propose_due_dates + confirm_due_dates if any tasks missing due dates"
     side_effects:
       - "Work.status=Published"
       - "Task.status=Published for all tasks"
@@ -91,8 +95,8 @@ tools:
   - refine_subtasks: Refine subtasks based on user feedback
   
   # Work Management
-  - create_work: Create work with full descriptions. Pass work description and task objects with title/description/priority fields
-  - publish_work: Publish work and optionally schedule first task
+  - create_work: Create work with full descriptions. Pass work description, task objects with title/description/priority, and expected_completion_hint. Does NOT auto-assign due dates.
+  - publish_work: Publish work and optionally schedule first task. REQUIRES all tasks to have confirmed due dates first.
   - get_work: Get work details with all tasks
   - list_works: List works by status (draft/published/completed/all)
   - complete_work: Mark work as completed
@@ -107,6 +111,8 @@ tools:
   - complete_task_and_schedule_next: Complete task and schedule next pending one
   - snooze_task: Snooze task by N days
   - reschedule_task_event: Reschedule task to new due date
+  - propose_due_dates: Use LLM to generate proposed due dates based on task difficulty and deadline. Returns suggestions for user review.
+  - confirm_due_dates: Apply user-confirmed due dates to tasks (only call after user confirms)
   
   # Calendar/Google Tasks Integration
   - schedule_task_to_calendar: Schedule task as Google Calendar/Tasks event
@@ -129,11 +135,12 @@ skills:
   - id: breakdown_work
     description: "Turn a user-described work item into smaller subtasks."
     inputs: ["user_work_description", "expected_completion_hint?"]
-    outputs: ["candidate_tasks", "initial_due_dates"]
+    outputs: ["candidate_tasks"]
     uses_tools: ["generate_subtasks"]
     policy:
       - "Aim for 3–10 tasks; if more, group into phases."
-      - "Spread due dates between now and expected completion."
+      - "ALWAYS capture expected_completion_hint from user (when, by Friday, this week, etc)."
+      - "Due dates will be proposed by LLM later for user confirmation."
       - "ALWAYS populate work description from work_description field returned by generate_subtasks."
       - "ALWAYS preserve task descriptions from subtasks - pass full task objects with description and priority."
 
@@ -155,15 +162,29 @@ skills:
       - "Respect user's explicit deadlines."
 
   - id: persist_work_and_tasks
-    description: "Write Work + Tasks to DB with full descriptions."
-    inputs: ["work_metadata", "scheduled_tasks"]
+    description: "Write Work + Tasks to DB with full descriptions and expected_completion_hint."
+    inputs: ["work_metadata", "scheduled_tasks", "expected_completion_hint"]
     outputs: ["work_id"]
     uses_tools: ["create_work"]
     policy:
+      - "ALWAYS pass expected_completion_hint to create_work if user provided one."
       - "Work description must be populated from generate_subtasks output."
       - "Tasks must be passed as objects with title, description, and priority fields."
       - "Never pass tasks as plain strings - always use full task objects to preserve descriptions."
+      - "Due dates are NOT assigned yet - will be proposed next for user confirmation."
 
+  - id: propose_and_confirm_due_dates
+    description: "Use LLM to propose due dates and get user confirmation."
+    inputs: ["work_id", "expected_completion_hint"]
+    outputs: ["confirmed_schedule"]
+    uses_tools: ["propose_due_dates", "confirm_due_dates"]
+    policy:
+      - "ALWAYS call propose_due_dates first to get LLM suggestions."
+      - "ALWAYS show proposed dates to user in readable format."
+      - "Ask user to confirm or suggest changes."
+      - "Only call confirm_due_dates AFTER explicit user approval."
+      - "If user requests changes, regenerate with updated hint."
+  
   - id: request_due_date_confirmation
     description: "Send Slack message summarising due dates; wait for response."
     inputs: ["work_id"]
@@ -262,22 +283,37 @@ behaviour:
         action: "persist_work_and_tasks"
         transitions:
           - event: "persist_success"
-            target: PostSubmit
+            target: ProposeDueDates
 
-      - id: PostSubmit
-        on_enter: "request_due_date_confirmation"
+      - id: ProposeDueDates
+        on_enter: "Call propose_due_dates to get LLM-suggested schedule"
+        action: "propose_and_confirm_due_dates"
         policy:
-          - "Send Slack due date confirmation (non-blocking)"
-          - "Do NOT automatically publish - wait for explicit confirmation"
+          - "ALWAYS use propose_due_dates tool to get AI suggestions"
+          - "Display proposed dates in clear, readable format to user"
+          - "Ask: 'Here are the proposed due dates. Do they look good?'"
+          - "Wait for explicit user confirmation"
         transitions:
-          - event: "due_dates_confirmed"
-            target: ConfirmPublish
-          - event: "user_requests_publish"
+          - event: "user_confirms_dates"
+            target: ApplyDueDates
+          - event: "user_requests_changes"
+            target: ProposeDueDates
+          - event: "user_declines"
+            target: Done
+      
+      - id: ApplyDueDates
+        on_enter: "Call confirm_due_dates to persist user-approved schedule"
+        policy:
+          - "Only call confirm_due_dates after user explicitly approves"
+        transitions:
+          - event: "dates_applied"
             target: ConfirmPublish
 
       - id: ConfirmPublish
-        on_enter: "Ask user to confirm before publishing and scheduling."
+        on_enter: "Verify all tasks have due dates, then ask user to confirm before publishing."
         policy:
+          - "VERIFY all tasks have due_date before proceeding"
+          - "If any tasks missing due dates, call assign_smart_due_dates first"
           - "ALWAYS get explicit confirmation before calling publish_work"
           - "Ask: 'Should I publish this work and schedule the first task?'"
           - "Explain what will happen: status changes, calendar event creation, tracking starts"

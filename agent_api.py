@@ -23,7 +23,7 @@ from core.scheduling import (
     ensure_task_scheduled, complete_task_and_schedule_next,
     sync_from_google_tasks, delete_task_from_calendar
 )
-from core.due_dates import DueDateManager, auto_assign_due_dates, bulk_set_due_dates
+from core.due_dates import DueDateManager, bulk_set_due_dates
 
 logger = logging.getLogger(__name__)
 
@@ -575,7 +575,7 @@ def publish_work_flow(work_id: int, schedule_first_task: bool = True) -> bool:
 
 
 def create_work_with_tasks(title: str, description: str, task_data: List[Dict[str, str]],
-                           auto_due_dates: bool = False) -> Optional[int]:
+                           auto_due_dates: bool = False, expected_completion_hint: Optional[str] = None) -> Optional[int]:
     """Create a work item with multiple tasks.
     
     Args:
@@ -583,6 +583,7 @@ def create_work_with_tasks(title: str, description: str, task_data: List[Dict[st
         description: Work description
         task_data: List of task dicts with 'title' and optionally 'description' and 'priority'
         auto_due_dates: Whether to auto-assign due dates with spacing
+        expected_completion_hint: Optional deadline hint like "this week", "by Friday", etc.
         
     Returns:
         Created work ID or None on failure
@@ -607,18 +608,59 @@ def create_work_with_tasks(title: str, description: str, task_data: List[Dict[st
         tasks.append(task_dict)
     
     # Create work
-    work = create_work(title, description, tasks, WorkStatus.DRAFT)
+    work = create_work(title, description, tasks, WorkStatus.DRAFT, expected_completion_hint)
     if not work:
         logger.error("Failed to create work")
         return None
     
     logger.info(f"Created work {work.id} with {len(task_data)} tasks")
     
-    # Auto-assign due dates if requested
-    if auto_due_dates:
-        auto_assign_due_dates(work.id, spacing_days=1)
+    # Note: Due dates will be proposed separately for user confirmation
+    # Do not auto-assign here
     
     return work.id
+
+
+def propose_due_dates_for_work(work_id: int, expected_completion_hint: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Generate proposed due dates for user review and confirmation.
+    
+    Args:
+        work_id: Work item ID
+        expected_completion_hint: Deadline hint like "this week", "by Friday", etc.
+        
+    Returns:
+        Dict with proposed schedule or None if failed
+    """
+    from core.due_dates import propose_due_dates
+    
+    work = get_work_by_id(work_id, include_tasks=True)
+    if not work:
+        logger.error(f"Work {work_id} not found")
+        return None
+    
+    # Use work's expected_completion_hint if not provided
+    hint = expected_completion_hint or work.expected_completion_hint
+    
+    if not hint:
+        logger.warning(f"No deadline hint for work {work_id}")
+        return None
+    
+    return propose_due_dates(work_id, hint)
+
+
+def confirm_due_dates_for_work(work_id: int, schedule_data: Dict[int, str]) -> bool:
+    """Apply user-confirmed due dates to tasks.
+    
+    Args:
+        work_id: Work item ID
+        schedule_data: Dict mapping task_id -> 'YYYY-MM-DD' date string
+        
+    Returns:
+        True if all dates applied successfully
+    """
+    from core.due_dates import confirm_and_apply_due_dates
+    
+    return confirm_and_apply_due_dates(work_id, schedule_data)
 
 
 def update_tasks_due_dates_from_slack(due_date_map: Dict[int, str]) -> bool:
