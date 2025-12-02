@@ -565,7 +565,8 @@ def publish_work_flow(work_id: int, schedule_first_task: bool = True) -> bool:
         if work and hasattr(work, 'tasks') and work.tasks:
             first_task = work.tasks[0]
             update_task_status(first_task.id, TaskStatus.TRACKED)
-            ensure_task_scheduled(first_task.id, work.title)
+            # Skip notification here since publish notification will include the scheduled task
+            ensure_task_scheduled(first_task.id, work.title, skip_notification=True)
     
     # Send publish notification
     send_work_publish_notification(work_id)

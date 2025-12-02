@@ -20,7 +20,7 @@ from .slack import get_notifier
 logger = logging.getLogger(__name__)
 
 
-def ensure_task_scheduled(task_id: int, work_title: Optional[str] = None) -> bool:
+def ensure_task_scheduled(task_id: int, work_title: Optional[str] = None, skip_notification: bool = False) -> bool:
     """Ensure a task has a corresponding Google Tasks entry.
     
     Creates a Google Task if one doesn't exist, or verifies existing one.
@@ -29,6 +29,7 @@ def ensure_task_scheduled(task_id: int, work_title: Optional[str] = None) -> boo
     Args:
         task_id: Task ID to schedule
         work_title: Work title for context (fetched if not provided)
+        skip_notification: If True, skip sending Slack notification (e.g., when part of publish flow)
         
     Returns:
         True if scheduled successfully, False otherwise
@@ -81,11 +82,12 @@ def ensure_task_scheduled(task_id: int, work_title: Optional[str] = None) -> boo
     update_task_calendar_event(task_id, event_id)
     logger.info(f"Scheduled task {task_id} as Google Task {event_id}")
     
-    # Send Slack notification
-    notifier = get_notifier()
-    work = get_work_by_id(task.work_id, include_tasks=False)
-    if work:
-        notifier.send_event_created(task, work)
+    # Send Slack notification (unless skipped, e.g., during publish flow)
+    if not skip_notification:
+        notifier = get_notifier()
+        work = get_work_by_id(task.work_id, include_tasks=False)
+        if work:
+            notifier.send_event_created(task, work)
     
     return True
 
