@@ -7,12 +7,14 @@ agent:
     via Slack until the work is done.
 
 persona:
-  tone: "supportive, pragmatic, low-friction"
+  tone: "supportive, pragmatic, low-friction, conversational"
   audience: "busy individual users"
   constraints:
     - "Minimise number of questions asked at once."
     - "Avoid overwhelming the user with too many subtasks."
     - "Be explicit about due-date assumptions and show them for confirmation."
+    - "Always lead responses with appropriate follow-up questions to guide users through next steps."
+    - "Frame questions to make the workflow easier and more conversational."
 
 objectives:
   primary:
@@ -122,11 +124,18 @@ tools:
   
   # Notifications
   - send_slack_message: Send text message to Slack
-  - send_due_date_confirmation: Send due date confirmation for work
-  - notify_task_completed: Send task completion notification
-  - notify_work_completed: Send work completion notification
-  - grouped_work_alert: Send grouped notification for multiple work changes
-  - daily_planner_digest: Send Slack notification of today's tasks
+  - send_due_date_confirmation: Send due date confirmation for work (formatted with header and icons)
+  - notify_task_completed: Send task completion notification (formatted with ✅ icon)
+  - notify_work_completed: Send work completion notification (formatted with 🎉 icon)
+  - grouped_work_alert: Send grouped notification for multiple work changes (formatted with 🔔 icon)
+  - daily_planner_digest: Send Slack notification of today's tasks (formatted with ☀️ icon)
+  
+  # Slack Notification Standards:
+  # - Use emoji icons to distinguish notification types (📋, 🚀, ✅, 🎉, ⏰, 📅, 🔔, ☀️)
+  # - Keep messages short and scannable
+  # - Remove technical details (event_id, internal IDs)
+  # - Use bold text for emphasis (*text*)
+  # - Group related information with proper spacing
   
   # Background/Async
   - queue_celery_task: Queue task for async Celery processing
@@ -138,7 +147,10 @@ skills:
     outputs: ["candidate_tasks"]
     uses_tools: ["generate_subtasks"]
     policy:
-      - "Aim for 3–10 tasks; if more, group into phases."
+      - "Default to 3-5 subtasks based on task complexity and difficulty."
+      - "For simple tasks, generate only 2-3 subtasks. For complex tasks, generate up to 5 subtasks."
+      - "Avoid over-generating subtasks - quality over quantity."
+      - "If more than 5 subtasks needed, group into phases."
       - "ALWAYS capture expected_completion_hint from user (when, by Friday, this week, etc)."
       - "Due dates will be proposed by LLM later for user confirmation."
       - "ALWAYS populate work description from work_description field returned by generate_subtasks."
@@ -249,12 +261,15 @@ behaviour:
 
       - id: Breakdown
         action: "breakdown_work"
+        policy:
+          - "Generate 3-5 subtasks based on task complexity"
+          - "Lead with follow-up question after showing subtasks"
         transitions:
           - event: "candidate_tasks_ready"
             target: Review
 
       - id: Review
-        on_enter: "Show tasks, priorities, due dates; ask for changes."
+        on_enter: "Show tasks, priorities, due dates; lead with question: 'Does this breakdown look good, or would you like me to adjust any of these tasks?'"
         transitions:
           - event: "user_requests_changes"
             target: Refine

@@ -13,12 +13,12 @@ import agent_api
 logger = logging.getLogger('agent.tools')
 
 
-def tool_generate_subtasks(task_description: str, max_subtasks: int = 5) -> Dict[str, Any]:
+def tool_generate_subtasks(task_description: str, max_subtasks: int = 4) -> Dict[str, Any]:
     """
     Generate subtasks for a given task description.
     Args:
         task_description (str): Description of the main task to decompose.
-        max_subtasks (int, optional): Maximum number of subtasks to generate (default: 5).
+        max_subtasks (int, optional): Maximum number of subtasks to generate (default: 4).
     Example:
         tool_generate_subtasks(task_description="Prepare quarterly report", max_subtasks=5)
     Response:

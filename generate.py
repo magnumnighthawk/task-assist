@@ -12,12 +12,14 @@ load_dotenv()
 client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
 
-def generate_subtasks(task_description: str, max_subtasks: int = 5):
+def generate_subtasks(task_description: str, max_subtasks: int = 4):
     now = datetime.now().isoformat()
     system_prompt = (
         "You are a JSON formatter and project assistant. "
         "Given a user task, generate a crisp, short work item name (work_name), a concise work description (work_description), "
         "and break down the task into a few practical, actionable subtasks (subtasks) that can be added to a calendar or reminder app. "
+        "IMPORTANT: Default to generating 3-5 subtasks based on the complexity and difficulty of the task. "
+        "For simple tasks, generate only 2-3 subtasks. For complex tasks, generate up to 5 subtasks. "
         "Ensure the subtasks are necessary and avoid over-complicating simple tasks. "
         "Each subtask must be a JSON object with exactly two keys: 'description' and 'priority'. "
         "The 'description' should be a concise string, and 'priority' should be one of 'High', 'Medium', or 'Low'. "
@@ -74,7 +76,7 @@ def generate_subtasks(task_description: str, max_subtasks: int = 5):
         }
 
 # New function to revise/modify subtasks
-def revise_subtasks(original_subtasks, feedback, max_subtasks=5):
+def revise_subtasks(original_subtasks, feedback, max_subtasks=4):
     now = datetime.now().isoformat()
     system_prompt = (
         "You are an expert project manager and JSON formatter. Given the following subtasks (in JSON), revise them according to the user's feedback. "

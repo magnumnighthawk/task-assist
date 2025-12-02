@@ -147,10 +147,7 @@ class SlackNotifier:
         Returns:
             True if sent successfully
         """
-        message = (
-            f"⏰ Task '{task.title}' in work '{work.title}' has been snoozed {task.snooze_count} times. "
-            f"Consider breaking it down or updating it."
-        )
+        message = f"⏰ *{task.title}* snoozed {task.snooze_count}x - Consider breaking it down?"
         return self.send_plain(message)
     
     def send_daily_reminder(self, tasks: List[Task]) -> bool:
@@ -165,8 +162,8 @@ class SlackNotifier:
         if not tasks:
             return True  # No reminder needed
         
-        task_lines = [f"• {t.title} (Work: {t.work.title if hasattr(t, 'work') else 'Unknown'})" for t in tasks]
-        message = "📅 Planned tasks for today:\n" + "\n".join(task_lines)
+        task_lines = [f"📌 {t.title}" for t in tasks]
+        message = "☀️ *Today's Tasks*\n" + "\n".join(task_lines)
         return self.send_plain(message)
     
     def send_grouped_alert(self, work: Work, changes: List[str]) -> bool:
@@ -179,7 +176,7 @@ class SlackNotifier:
         Returns:
             True if sent successfully
         """
-        message = f"📝 Updates for work '{work.title}':\n" + "\n".join([f"• {c}" for c in changes])
+        message = f"🔔 *{work.title}* - Updates\n" + "\n".join([f"  • {c}" for c in changes])
         return self.send_plain(message)
     
     def send_event_created(self, task: Task, work: Work) -> bool:
@@ -192,7 +189,8 @@ class SlackNotifier:
         Returns:
             True if sent successfully
         """
-        message = f"📆 Calendar event created for task '{task.title}' in work '{work.title}'"
+        due_str = task.due_date.strftime('%b %d') if task.due_date else ''
+        message = f"📅 *Scheduled:* {task.title}" + (f" - {due_str}" if due_str else "")
         return self.send_plain(message)
     
     def send_event_updated(self, task: Task, work: Work) -> bool:
@@ -205,7 +203,8 @@ class SlackNotifier:
         Returns:
             True if sent successfully
         """
-        message = f"📆 Calendar event updated for task '{task.title}' in work '{work.title}'"
+        due_str = task.due_date.strftime('%b %d') if task.due_date else ''
+        message = f"📆 *Rescheduled:* {task.title}" + (f" - {due_str}" if due_str else "")
         return self.send_plain(message)
     
     def _build_interactive_blocks(self, work: Work) -> List[Dict[str, Any]]:
@@ -219,10 +218,17 @@ class SlackNotifier:
         """
         blocks = [
             {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "📋 Confirm Due Dates"
+                }
+            },
+            {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Work Item Confirmation Needed*\n*Title:* {work.title}\n*Description:* {work.description or 'No description'}"
+                    "text": f"*{work.title}*\n{work.description or 'No description'}"
                 }
             },
             {"type": "divider"}
@@ -236,7 +242,7 @@ class SlackNotifier:
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Task:* {task.title}\nCurrent Due: {due_str}"
+                    "text": f"📌 *{task.title}*\nDue: {due_str}"
                 },
                 "accessory": {
                     "type": "datepicker",
@@ -244,7 +250,7 @@ class SlackNotifier:
                     "initial_date": due_str,
                     "placeholder": {
                         "type": "plain_text",
-                        "text": "Select due date"
+                        "text": "Select date"
                     }
                 }
             })
@@ -279,32 +285,30 @@ class SlackNotifier:
         """
         blocks = [
             {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "🚀 Work Published"
+                }
+            },
+            {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Work Published*\n*Title:* {work.title}\n*Description:* {work.description or 'No description'}"
+                    "text": f"*{work.title}*\n{work.description or ''}"
                 }
-            },
-            {"type": "divider"}
+            }
         ]
         
         # Add calendar task info if present
         if calendar_task:
-            due_str = calendar_task.due_date.strftime('%Y-%m-%d') if calendar_task.due_date else 'No due date'
-            text = f"*Calendar Task Added*\n*Task:* {calendar_task.title}\nDue: {due_str}"
-            if calendar_task.calendar_event_id:
-                text += f"\nEvent ID: {calendar_task.calendar_event_id}"
-            
-            blocks.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": text}
-            })
-        else:
+            due_str = calendar_task.due_date.strftime('%B %d, %Y') if calendar_task.due_date else 'No due date'
+            blocks.append({"type": "divider"})
             blocks.append({
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "No calendar task was added for this work."
+                    "text": f"📅 *First task scheduled*\n{calendar_task.title}\nDue: {due_str}"
                 }
             })
         
