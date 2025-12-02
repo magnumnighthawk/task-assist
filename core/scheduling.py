@@ -57,7 +57,7 @@ def ensure_task_scheduled(task_id: int, work_title: Optional[str] = None) -> boo
     
     # Create Google Task
     provider = get_provider()
-    title = f"{work_title}: {task.title}"
+    title = task.title
     
     # Use task due date, or default to tomorrow 8am if missing
     due = task.due_date if task.due_date else datetime.utcnow() + timedelta(days=1, hours=8)

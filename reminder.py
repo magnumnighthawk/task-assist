@@ -134,7 +134,7 @@ class ReminderAgent:
             finally:
                 db.close()
 
-        summary = f"{work_title}: {task.title}"
+        summary = task.title
         start_time = task.due_date.isoformat() if task.due_date else (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat()
         end_time = (task.due_date + datetime.timedelta(hours=1)).isoformat() if task.due_date else (datetime.datetime.utcnow() + datetime.timedelta(days=1, hours=1)).isoformat()
         event = self.create_event(summary, start_time, end_time, description=None)
