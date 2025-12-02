@@ -63,12 +63,19 @@ This project is intended to be deployed as a single container on Azure Web App f
 
 	# or tag with short commit SHA (recommended for CI/CD)
 	podman build -t myregistry/myrepo/task-assist:$(git rev-parse --short HEAD) -f Dockerfile .
+	
+	# Build for Azure App Service (linux/amd64 platform)
+	podman build --platform linux/amd64 -t docker.io/<username>/task-manager:v1-amd64 .
 	```
 
-2. Push to your registry (ACR example):
+2. Push to your registry:
 	```bash
+	# Push to Azure Container Registry (ACR)
 	az acr login --name <ACR_NAME>
 	podman push myregistry/myrepo/task-assist:v1.0.0
+	
+	# Push to Docker Hub (for Azure App Service)
+	podman push docker.io/<username>/task-manager:v1-amd64
 	```
 
 3. Create an Azure Web App for Containers and point it to the image:
