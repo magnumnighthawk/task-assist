@@ -1,7 +1,9 @@
 import os
 import logging
+from typing import Any, Optional
 from dotenv import load_dotenv
 from google.adk.agents.llm_agent import Agent
+from google.adk.sessions.session import Session
 from .instructions import INSTRUCTION
 from .tools import TOOLS
 from .session_tracker import get_session_tracker
@@ -10,8 +12,68 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 gmp_key = os.getenv('GMP_API_KEY')
 
-# Create the base agent
-_base_agent = Agent(
+# Global session tracker - shared across agent instances
+_session_tracker = get_session_tracker()
+
+
+def _extract_session_id(session: Optional[Session]) -> str:
+    """Extract session ID from ADK session object."""
+    if session and hasattr(session, 'id'):
+        return str(session.id)
+    elif session and hasattr(session, 'session_id'):
+        return str(session.session_id)
+    return 'default'
+
+
+def _extract_message_content(message: Any) -> str:
+    """Extract text content from various message formats."""
+    if isinstance(message, str):
+        return message
+    elif hasattr(message, 'content'):
+        return str(message.content)
+    elif hasattr(message, 'text'):
+        return str(message.text)
+    elif isinstance(message, dict):
+        return message.get('content', message.get('text', str(message)))
+    return str(message)
+
+
+class LearningAgent(Agent):
+    """Agent subclass that includes automatic session tracking and feedback logging.
+    
+    This class extends the Google ADK Agent to add learning capabilities while
+    maintaining full compatibility with the ADK framework. Uses a global session
+    tracker to avoid Pydantic field validation issues.
+    """
+    
+    async def send(self, message: Any, session: Optional[Session] = None, **kwargs) -> Any:
+        """Override send method to track messages."""
+        session_id = _extract_session_id(session)
+        message_text = _extract_message_content(message)
+        
+        # Track user message using global tracker
+        _session_tracker.track_message(session_id, 'user', message_text)
+        
+        try:
+            # Call parent send method
+            response = await super().send(message, session=session, **kwargs)
+            
+            # Track agent response
+            if response:
+                response_text = _extract_message_content(response)
+                _session_tracker.track_message(session_id, 'assistant', response_text)
+            
+            return response
+            
+        except Exception as e:
+            logger.exception(f"Error in agent send: {e}")
+            # Track the error
+            _session_tracker.track_message(session_id, 'assistant', f"Error: {str(e)}")
+            raise
+
+
+# Create the learning agent - this is ADK-compatible and includes session tracking
+root_agent = LearningAgent(
     model='gemini-2.0-flash',
     name='task_assist_master_agent',
     description='An intelligent assistant that manages work and tasks end-to-end: breaks down work into actionable tasks, schedules them, tracks progress, sends reminders, and notifies users via Slack and calendar. Handles the full workflow as described in LIFECYCLE.md and IDEA.md.',
@@ -19,65 +81,14 @@ _base_agent = Agent(
     tools=list(TOOLS.values())
 )
 
-
-class LearningAgentWrapper:
-    """Wrapper around the agent that tracks conversations and logs feedback automatically."""
-    
-    def __init__(self, agent):
-        self.agent = agent
-        self.session_tracker = get_session_tracker()
-        logger.info("LearningAgentWrapper initialized with automatic feedback logging")
-    
-    def __call__(self, message: str, session_id: str = 'default', **kwargs):
-        """Process a message through the agent with session tracking.
-        
-        Args:
-            message: User message
-            session_id: Session identifier (e.g., from web session, user ID, etc.)
-            **kwargs: Additional arguments passed to agent
-            
-        Returns:
-            Agent response
-        """
-        # Track user message
-        self.session_tracker.track_message(session_id, 'user', message)
-        
-        try:
-            # Call the underlying agent
-            response = self.agent(message, **kwargs)
-            
-            # Track agent response
-            if response:
-                response_text = str(response) if not isinstance(response, str) else response
-                self.session_tracker.track_message(session_id, 'assistant', response_text)
-            
-            return response
-            
-        except Exception as e:
-            logger.exception(f"Error in agent call: {e}")
-            # Track the error
-            self.session_tracker.track_message(session_id, 'assistant', f"Error: {str(e)}")
-            raise
-    
-    def end_session(self, session_id: str):
-        """Explicitly end a session and log feedback.
-        
-        Call this when you know a session has ended (e.g., user logout, tab close event).
-        
-        Args:
-            session_id: Session to end
-        """
-        self.session_tracker.end_session(session_id, explicit=True)
-        logger.info(f"Explicitly ended session: {session_id}")
-    
-    def __getattr__(self, name):
-        """Delegate attribute access to the underlying agent."""
-        return getattr(self.agent, name)
+logger.info("LearningAgent initialized with automatic feedback logging")
 
 
-# Export the base agent directly as root_agent (ADK requirement)
-# Session tracking will be handled via a separate middleware layer if needed
-root_agent = _base_agent
-
-# Make wrapper available for custom integrations
-learning_agent = LearningAgentWrapper(_base_agent)
+def end_session(session_id: str):
+    """Explicitly end a session and log feedback.
+    
+    Args:
+        session_id: Session to end
+    """
+    _session_tracker.end_session(session_id, explicit=True)
+    logger.info(f"Explicitly ended session: {session_id}")
