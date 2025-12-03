@@ -2,9 +2,13 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey,
 from sqlalchemy import Boolean
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
+import os
 
 Base = declarative_base()
-engine = create_engine('sqlite:///task_manager.db')
+
+# Use DATABASE_PATH env var if set, otherwise default to local path
+DATABASE_PATH = os.getenv('DATABASE_PATH', 'task_manager.db')
+engine = create_engine(f'sqlite:///{DATABASE_PATH}')
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 def get_db():

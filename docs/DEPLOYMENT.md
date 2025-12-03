@@ -46,6 +46,25 @@ This project is intended to be deployed as a single container on Azure Web App f
 - All services (Flask API, Streamlit UI, Celery worker managed by Supervisor, Nginx) run inside one container using Supervisor.
 - Easy to push a single image to a registry (ACR or Docker Hub) and point an Azure Web App to that image.
 
+## Database Persistence
+
+The application uses SQLite and stores data in `/app/data/task_manager.db`. To persist data across container rebuilds:
+
+### Local Development (Docker Compose)
+Use the provided `docker-compose.yml` which mounts a named volume:
+```bash
+docker-compose up --build
+```
+Data persists in the `task-manager-db` Docker volume across rebuilds.
+
+### Azure Web App
+Mount Azure Storage as a persistent volume:
+1. Create a storage account and file share
+2. Mount it to `/app/data` in your Web App settings
+3. Set `DATABASE_PATH=/app/data/task_manager.db` as an app setting
+
+See "Data Persistence on Azure" section below for detailed steps.
+
 ## Prerequisites
 - Azure account
 - Azure CLI (az)
@@ -161,6 +180,82 @@ python3 scripts/bump_version.py --apply --commit --tag
 
 ----
 
+## Data Persistence on Azure Web App
+
+Azure Web App containers are ephemeral - data is lost on restart/redeploy. To persist the SQLite database:
+
+### Step 1: Create Azure Storage Account and File Share
+
+```bash
+# Create storage account (use same resource group as your web app)
+az storage account create \
+  --name <storage_account_name> \
+  --resource-group <rg> \
+  --location <location> \
+  --sku Standard_LRS
+
+# Get storage account key
+STORAGE_KEY=$(az storage account keys list \
+  --account-name <storage_account_name> \
+  --resource-group <rg> \
+  --query "[0].value" -o tsv)
+
+# Create file share for database
+az storage share create \
+  --name task-manager-data \
+  --account-name <storage_account_name> \
+  --account-key $STORAGE_KEY \
+  --quota 1
+```
+
+### Step 2: Mount Storage to Web App
+
+```bash
+# Add the storage mount to your web app
+az webapp config storage-account add \
+  --resource-group <rg> \
+  --name <app_name> \
+  --custom-id TaskManagerData \
+  --storage-type AzureFiles \
+  --share-name task-manager-data \
+  --account-name <storage_account_name> \
+  --access-key $STORAGE_KEY \
+  --mount-path /app/data
+```
+
+### Step 3: Set Database Path Environment Variable
+
+```bash
+az webapp config appsettings set \
+  --resource-group <rg> \
+  --name <app_name> \
+  --settings DATABASE_PATH=/app/data/task_manager.db
+```
+
+### Step 4: Restart Web App
+
+```bash
+az webapp restart --name <app_name> --resource-group <rg>
+```
+
+Your database will now persist across container rebuilds and redeployments!
+
+### Alternative: Other Cloud Providers
+
+The same pattern works on other platforms:
+
+**AWS Elastic Beanstalk / ECS:**
+- Use EFS (Elastic File System) mounted to `/app/data`
+- Set `DATABASE_PATH` environment variable
+
+**Google Cloud Run:**
+- Mount Cloud Filestore or use Cloud SQL for PostgreSQL
+- For SQLite: use persistent disks with volume mounts
+
+**Generic Docker Host:**
+- Use bind mount: `-v /host/path/data:/app/data`
+- Or named volume: `-v task-manager-db:/app/data`
+
 ## Clean up resources
 To avoid charges, delete the resource group when you are finished:
 ```bash
@@ -172,4 +267,5 @@ az group delete --name <rg>
 ## Helpful references
 - Azure Web Apps for Containers: https://learn.microsoft.com/azure/app-service/quickstart-docker
 - az webapp config container: https://learn.microsoft.com/cli/azure/webapp/config/container
+- Azure Storage mounting: https://learn.microsoft.com/azure/app-service/configure-connect-to-azure-storage
 

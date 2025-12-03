@@ -90,19 +90,37 @@ docker run -p 80:80 --env-file .env task-assist
    ```
    This uses the `Procfile` to launch Flask, Streamlit, Celery, Redis, Agent, and other services in parallel.
 
-### Docker (Recommended for Production/Cloud)
+### Docker Compose (Recommended for Local Testing)
+Use Docker Compose for easy local development with persistent storage:
+```bash
+docker-compose up --build
+```
+This mounts a named volume for database persistence. Your data will survive container rebuilds.
+
+### Docker (Standalone)
 Build and run the multi-service container:
 ```bash
 podman build -t task-assist .
-podman run -p 8000:8000 --env-file .env task-assist
+podman run -p 8000:8000 --env-file .env \
+  -v task-manager-data:/app/data \
+  -e DATABASE_PATH=/app/data/task_manager.db \
+  task-assist
 ```
-This launches all services (Flask, Streamlit, Celery, Redis, Nginx, etc.) in a single container using Supervisor. Access the app at `http://localhost:8000`.
+This launches all services (Flask, Streamlit, Celery, Redis, Nginx, etc.) in a single container using Supervisor. The `-v` flag creates a persistent volume for your database. Access the app at `http://localhost:8000`.
 
 ### Azure Web App for Containers
 1. Push your Docker image to a registry (ACR or Docker Hub).
 2. Create an Azure Web App for Containers and configure it to use your image.
-3. Set environment variables in the Azure portal.
-4. Use Azure Log Stream to view logs from all services.
+3. **Mount Azure Storage for database persistence** (see [DEPLOYMENT.md](docs/DEPLOYMENT.md)):
+   ```bash
+   # Create storage and mount to /app/data
+   az webapp config storage-account add --resource-group <rg> --name <app_name> ...
+   az webapp config appsettings set --settings DATABASE_PATH=/app/data/task_manager.db ...
+   ```
+4. Set other environment variables in the Azure portal.
+5. Use Azure Log Stream to view logs from all services.
+
+**Important**: Without persistent storage, your database will be lost on every redeploy. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed Azure Storage setup.
 
 Version reporting
 

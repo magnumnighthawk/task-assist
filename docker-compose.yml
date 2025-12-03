@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount local database file directly
+      - ./task_manager.db:/app/task_manager.db
+      # Mount credentials (create these files locally first)
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.pickle:/app/token.pickle
+    environment:
+      # Use local database path
+      - DATABASE_PATH=/app/task_manager.db
+      - GMP_API_KEY=${GMP_API_KEY}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      # Add other env vars from .env.sample as needed
+    env_file:
+      - .env
+    restart: unless-stopped
+
+# No volumes section needed for direct file mount
