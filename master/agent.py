@@ -75,5 +75,9 @@ class LearningAgentWrapper:
         return getattr(self.agent, name)
 
 
-# Export the wrapped agent as root_agent
-root_agent = LearningAgentWrapper(_base_agent)
+# Export the base agent directly as root_agent (ADK requirement)
+# Session tracking will be handled via a separate middleware layer if needed
+root_agent = _base_agent
+
+# Make wrapper available for custom integrations
+learning_agent = LearningAgentWrapper(_base_agent)
