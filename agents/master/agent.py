@@ -1,9 +1,17 @@
 import os
 import logging
+import sys
+from pathlib import Path
 from typing import Any, Optional
 from dotenv import load_dotenv
 from google.adk.agents.llm_agent import Agent
 from google.adk.sessions.session import Session
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from .instructions import INSTRUCTION
 from .tools import TOOLS
 from .session_tracker import get_session_tracker

@@ -5,9 +5,9 @@
 - The app is a multi-service Python project: **AI Agent (ADK)**, Flask API, Streamlit UI, Celery workers, Redis, and Nginx, orchestrated via Docker and Supervisor.
 
 ## CRITICAL: Source of Truth
-- **`master/master_v1.spec.yaml`** is the **SINGLE SOURCE OF TRUTH** for the agent's behavior, tools, skills, domain model, and workflows.
+- **`agents/master/master_v1.spec.yaml`** is the **SINGLE SOURCE OF TRUTH** for the agent's behavior, tools, skills, domain model, and workflows.
 - **ALWAYS consult and update the spec** when:
-  - Adding/modifying agent tools (`master/tools.py`)
+  - Adding/modifying agent tools (`agents/master/tools.py`)
   - Changing work/task lifecycle logic
   - Adding new skills or workflows
   - Modifying agent behavior or constraints
@@ -16,9 +16,9 @@
 - Keep the spec synchronized with code changes to maintain system integrity.
 
 ## Architecture & Key Components
-- **AI Agent** (`master/agent.py`): Google ADK-powered agent that orchestrates work breakdown, task management, and user interactions. Runs on port 3000, accessible at `/agent` via nginx.
-- **Agent Tools** (`master/tools.py`): Tool functions called by the agent to perform actions (create work, schedule tasks, send notifications, etc.).
-- **Agent Spec** (`master/master_v1.spec.yaml`): Canonical specification defining agent behavior, tools, skills, domain model, and lifecycle flows.
+- **AI Agent** (`agents/master/agent.py`): Google ADK-powered agent that orchestrates work breakdown, task management, and user interactions. Runs on port 3000, accessible at `/agent` via nginx.
+- **Agent Tools** (`agents/master/tools.py`): Tool functions called by the agent to perform actions (create work, schedule tasks, send notifications, etc.).
+- **Agent Spec** (`agents/master/master_v1.spec.yaml`): Canonical specification defining agent behavior, tools, skills, domain model, and lifecycle flows.
 - **Flask API** (`application.py`): REST endpoints for Slack interactivity, health checks, and legacy API operations.
 - **Streamlit UI** (`streamlit_app.py`): User interface for managing work and tasks.
 - **Core Modules** (`core/`): Business logic layer (storage, scheduling, Slack, tasks provider, work/task models).
@@ -31,14 +31,14 @@
 ## Developer Workflows
 - **Local Development**: Use `honcho start` to launch all services (agent, flask, streamlit, celery, redis, schedule, slack).
 - **Agent Development**: 
-  - Agent runs via `adk web --port 3000 --agent-path master.agent:root_agent`
+  - Agent runs via `adk web --port 3000 --reload_agents agents` (loads from `agents/master/`)
   - Accessible at `http://localhost:8000/agent` (proxied via nginx)
   - Direct access: `http://localhost:3000` when running standalone
 - **Production/Cloud**: Use Docker/Podman with Supervisor managing all services.
 - **Testing**: Add tests in a `tests/` directory and use `pytest`.
 
 ## Project Conventions & Patterns
-- **Work/Task Lifecycle**: Defined in `master/master_v1.spec.yaml` under `work_lifecycle` and `behaviour` sections. Always reference the spec for lifecycle flows.
+- **Work/Task Lifecycle**: Defined in `agents/master/master_v1.spec.yaml` under `work_lifecycle` and `behaviour` sections. Always reference the spec for lifecycle flows.
 - **Status Values**:
   - Work: `Draft`, `Published`, `Completed` (per spec)
   - Task: `Pending`, `Published`, `Tracked`, `Completed` (per spec and code)
@@ -64,7 +64,7 @@ When modifying the agent system:
 1. **Always Update the Spec First**: Before implementing changes to agent behavior, tools, or workflows, update `master/master_v1.spec.yaml` to reflect the intended design.
 
 2. **Keep Spec and Code Synchronized**:
-   - Adding a tool? Add it to spec's `tools` section AND `master/tools.py` AND the `TOOLS` dictionary
+   - Adding a tool? Add it to spec's `tools` section AND `agents/master/tools.py` AND the `TOOLS` dictionary
    - Changing workflow? Update spec's `work_lifecycle` or `behaviour` sections first
    - Modifying domain models? Update spec's `domain_model` section AND `db.py` / core models
    - Adding new skills? Document in spec's `skills` section
@@ -100,7 +100,7 @@ When modifying the agent system:
 
 ## Examples
 - Start all services: `honcho start`
-- Run agent standalone: `adk web --port 3000 --agent-path master.agent:root_agent`
+- Run agent standalone: `adk web --port 3000 --reload_agents agents`
 - Trigger Slack notification: `POST /api/notify-work/<work_id>`
 - Get weekly status via agent: Use `tool_get_weekly_status()` (not `tool_daily_planner_digest()`)
 
