@@ -8,6 +8,9 @@ __pycache__/
 credentials.json
 token.pickle
 
+# Deployment script (personalized)
+deploy.sh
+
 # Ignore pytest cache and virtual environment
 .pytest_cache/
 venv/
