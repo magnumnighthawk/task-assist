@@ -139,6 +139,11 @@ tools:
   
   # Background/Async
   - queue_celery_task: Queue task for async Celery processing
+  
+  # Learning & Optimization
+  - log_conversation_feedback: Log feedback about current conversation for learning (call at end of interaction)
+  - get_learning_context: Retrieve accumulated learning summaries to inform current behavior
+  - generate_behavior_summary: Generate periodic summary of feedback patterns and behavior adjustments
 
 skills:
   - id: breakdown_work
@@ -249,6 +254,75 @@ skills:
     inputs: ["work_id"]
     outputs: []
     uses_tools: ["work_store_api", "slack_notifier"]
+
+  - id: collect_conversation_feedback
+    description: "Log self-assessment of conversation quality and areas for improvement."
+    inputs: ["conversation_summary", "what_went_well", "what_could_improve", "user_satisfaction_estimate"]
+    outputs: ["feedback_id"]
+    uses_tools: ["log_conversation_feedback"]
+    policy:
+      - "Call at end of multi-turn interactions (after work created, or status checks completed)."
+      - "Be honest about uncertainties, unclear responses, or suboptimal flows."
+      - "Capture specific examples (e.g., 'User asked X times before I understood')."
+      - "NOTE: Automatic session tracking also logs feedback when sessions end via timeout/inactivity."
+      - "Manual logging via this skill provides more detailed agent self-assessment."
+  
+  - id: apply_learning_context
+    description: "Retrieve past feedback summaries to adjust current behavior."
+    inputs: []
+    outputs: ["learning_insights"]
+    uses_tools: ["get_learning_context"]
+    policy:
+      - "Call at start of complex interactions (new work creation, re-planning)."
+      - "Integrate insights into decision-making (e.g., 'Previously learned to ask fewer questions')."
+      - "Prioritize recent learnings over older patterns."
+
+session_tracking:
+  description: >
+    Automatic conversation tracking for learning and optimization.
+    All agent interactions are monitored via LearningAgentWrapper.
+  
+  mechanism: session_end_hook
+  implementation: master.session_tracker.SessionTracker
+  
+  automatic_capture:
+    - All user messages
+    - All agent responses
+    - Message timestamps
+    - Context tags (work_creation, due_dates, publishing, etc.)
+    - Session activity monitoring
+  
+  session_lifecycle:
+    start: First message in session
+    tracking: Every subsequent message
+    end_triggers:
+      - Inactivity timeout (default: 10 minutes)
+      - Explicit end call (root_agent.end_session)
+      - Application shutdown
+    feedback_logging: Automatic when session ends
+  
+  filtering:
+    substantial_threshold:
+      - Minimum 3 messages (user → agent → user), OR
+      - Contains important actions (work_creation, publishing, replanning)
+    skip_trivial: Single-turn queries not logged
+  
+  analysis:
+    automatic_metrics:
+      - Conversation efficiency (turn count)
+      - Confirmation patterns
+      - Error detection
+      - Success indicators
+      - User satisfaction estimate
+    quality_assessment:
+      - what_went_well: Positive patterns identified
+      - what_could_improve: Issues and inefficiencies
+      - user_satisfaction: Low/Medium/High estimate
+  
+  configuration:
+    inactivity_timeout: 10  # minutes
+    cleanup_interval: 60     # seconds
+    keep_recent_summaries: 3
 
 behaviour:
   interactive_creation:

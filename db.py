@@ -53,6 +53,31 @@ class WatchChannel(Base):
     expiration = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
+class ConversationLog(Base):
+    """Stores agent conversation feedback for learning and optimization."""
+    __tablename__ = 'conversation_log'
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_summary = Column(Text, nullable=False)  # Brief summary of what happened
+    what_went_well = Column(Text, nullable=True)  # Things that worked well
+    what_could_improve = Column(Text, nullable=True)  # Areas for improvement
+    user_satisfaction_estimate = Column(String, nullable=True)  # Low, Medium, High
+    context_tags = Column(String, nullable=True)  # Comma-separated tags (e.g., "work_creation,due_dates")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FeedbackSummary(Base):
+    """Stores periodic summaries of learning patterns for quick retrieval."""
+    __tablename__ = 'feedback_summary'
+    id = Column(Integer, primary_key=True, index=True)
+    period_start = Column(DateTime, nullable=False)
+    period_end = Column(DateTime, nullable=False)
+    total_conversations = Column(Integer, default=0)
+    key_learnings = Column(Text, nullable=False)  # Main insights and patterns
+    behavior_adjustments = Column(Text, nullable=False)  # Specific behavior changes to apply
+    active = Column(Boolean, default=True)  # Whether this summary is currently being used
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 

@@ -633,6 +633,103 @@ def tool_queue_celery_task(task_id: int) -> Dict[str, Any]:
         return {'error': str(e)}
 
 
+# ===== Learning & Feedback Tools =====
+
+def tool_log_conversation_feedback(
+    conversation_summary: str,
+    what_went_well: Optional[str] = None,
+    what_could_improve: Optional[str] = None,
+    user_satisfaction: Optional[str] = None,
+    context_tags: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """Log feedback about the current conversation for learning and optimization.
+    
+    Call this at the end of multi-turn interactions to record what went well and what
+    could be improved. The agent should self-assess its performance honestly.
+    
+    Args:
+        conversation_summary: Brief summary of what happened (e.g., "Created work with 4 tasks, set due dates")
+        what_went_well: Things that worked well (e.g., "User confirmed quickly, clear breakdown")
+        what_could_improve: Areas for improvement (e.g., "Asked too many confirmation questions")
+        user_satisfaction: Estimated satisfaction - "Low", "Medium", or "High"
+        context_tags: List of context tags like ["work_creation", "due_dates", "publishing"]
+        
+    Returns:
+        {"feedback_id": id, "logged": True}
+        
+    Example:
+        tool_log_conversation_feedback(
+            conversation_summary="Created work 'Build landing page' with 4 tasks and published",
+            what_went_well="User provided clear requirements, smooth due date confirmation",
+            what_could_improve="Could have combined the persist and publish confirmations",
+            user_satisfaction="High",
+            context_tags=["work_creation", "due_dates", "publishing"]
+        )
+    """
+    feedback_id = agent_api.record_conversation_feedback(
+        conversation_summary=conversation_summary,
+        what_went_well=what_went_well,
+        what_could_improve=what_could_improve,
+        user_satisfaction=user_satisfaction,
+        tags=context_tags
+    )
+    
+    if feedback_id:
+        return {"feedback_id": feedback_id, "logged": True}
+    return {"error": "failed to log feedback"}
+
+
+def tool_get_learning_context() -> Dict[str, Any]:
+    """Retrieve accumulated learning insights to inform current behavior.
+    
+    Call this at the start of complex interactions (like work creation) to get
+    behavior adjustments from past feedback. Use the insights to optimize your approach.
+    
+    Returns:
+        {
+            "has_learning": True/False,
+            "summaries": [list of learning period summaries],
+            "combined_adjustments": "formatted text with all behavior adjustments",
+            "total_summaries": count
+        }
+        
+    Example Response:
+        {
+            "has_learning": True,
+            "combined_adjustments": "Learning Period 1:\n- Ask fewer confirmation questions...",
+            "total_summaries": 2
+        }
+    """
+    learning_context = agent_api.get_learning_insights()
+    return learning_context
+
+
+def tool_generate_behavior_summary(days: int = 7) -> Dict[str, Any]:
+    """Generate a new learning summary from recent feedback logs.
+    
+    Analyzes feedback from the past N days to identify patterns and generate
+    behavior adjustments. This is typically called periodically (weekly) or when
+    requested by a user/admin.
+    
+    Args:
+        days: Number of days of feedback to analyze (default: 7)
+        
+    Returns:
+        {"summary_id": id, "generated": True, "conversations_analyzed": count}
+    """
+    summary_id = agent_api.generate_and_apply_learning_summary(days)
+    
+    if summary_id:
+        from core.feedback import get_recent_feedback
+        recent = get_recent_feedback(days=days)
+        return {
+            "summary_id": summary_id,
+            "generated": True,
+            "conversations_analyzed": len(recent)
+        }
+    return {"error": "no feedback to analyze or generation failed"}
+
+
 # Registry of tools the agent can call
 TOOLS = {
     # Task generation
@@ -675,4 +772,9 @@ TOOLS = {
     
     # Celery async
     'queue_celery_task': tool_queue_celery_task,
+    
+    # Learning & feedback
+    'log_conversation_feedback': tool_log_conversation_feedback,
+    'get_learning_context': tool_get_learning_context,
+    'generate_behavior_summary': tool_generate_behavior_summary,
 }

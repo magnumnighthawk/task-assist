@@ -686,3 +686,69 @@ def update_tasks_due_dates_from_slack(due_date_map: Dict[int, str]) -> bool:
     
     results = bulk_set_due_dates(datetime_map)
     return all(results.values())
+
+
+# ===== Learning & Feedback =====
+
+def record_conversation_feedback(
+    conversation_summary: str,
+    what_went_well: Optional[str] = None,
+    what_could_improve: Optional[str] = None,
+    user_satisfaction: Optional[str] = None,
+    tags: Optional[List[str]] = None
+) -> Optional[int]:
+    """Record feedback about a conversation for learning.
+    
+    Args:
+        conversation_summary: Brief summary of the conversation
+        what_went_well: Things that worked well
+        what_could_improve: Areas for improvement
+        user_satisfaction: Estimated satisfaction (Low, Medium, High)
+        tags: Context tags for categorization
+        
+    Returns:
+        Feedback log ID or None if failed
+    """
+    from core.feedback import log_conversation_feedback
+    
+    return log_conversation_feedback(
+        conversation_summary=conversation_summary,
+        what_went_well=what_went_well,
+        what_could_improve=what_could_improve,
+        user_satisfaction_estimate=user_satisfaction,
+        context_tags=tags
+    )
+
+
+def get_learning_insights() -> Dict[str, Any]:
+    """Get active learning context for behavior optimization.
+    
+    Returns:
+        Dict with learning insights and behavior adjustments
+    """
+    from core.feedback import get_active_learning_context
+    
+    return get_active_learning_context()
+
+
+def generate_and_apply_learning_summary(days: int = 7) -> Optional[int]:
+    """Analyze recent feedback and create a new learning summary.
+    
+    Args:
+        days: Number of days of feedback to analyze
+        
+    Returns:
+        Summary ID or None if failed
+    """
+    from core.feedback import generate_learning_summary_from_feedback, apply_learning_summary
+    
+    summary_data = generate_learning_summary_from_feedback(days)
+    if not summary_data:
+        logger.warning("No feedback data to generate summary from")
+        return None
+    
+    summary_id = apply_learning_summary(summary_data)
+    if summary_id:
+        logger.info(f"Created and applied learning summary {summary_id}")
+    
+    return summary_id
