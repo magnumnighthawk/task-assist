@@ -152,12 +152,6 @@ def get_all_works(db):
 def get_all_tasks(db):
     return db.query(Task).all()
 
-def get_unnotified_completed_tasks(db):
-    return db.query(Task).filter(Task.status == 'Completed', Task.notified == False).all()
-
-def get_unnotified_completed_works(db):
-    return db.query(Work).filter(Work.status == 'Completed', Work.notified == False).all()
-
 def create_watch_channel(db, channel_id, resource_id, address, expiration=None):
     wc = WatchChannel(channel_id=channel_id, resource_id=resource_id, address=address, expiration=expiration)
     db.add(wc)
